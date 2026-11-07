@@ -1,0 +1,9 @@
+node_modules/
+.aws-sam/
+samconfig.toml
+.DS_Store
+# secrets and local Python env
+.env
+.env.*
+.venv/
+__pycache__/
