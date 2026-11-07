@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Reconomy - AI-powered returns recovery (Bedrock + Lambda + S3 + DynamoDB)
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: us.anthropic.claude-opus-4-8
+    Description: Bedrock model or inference profile ID with image input (Converse API).
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: Origin allowed to call the API, e.g. https://reconomy.example.com
+
+Resources:
+  ImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireReturnPhotos
+            Status: Enabled
+            Prefix: returns/
+            ExpirationInDays: 90
+
+  DecisionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [content-type]
+
+  ReconomyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handler.handler
+      Runtime: nodejs20.x
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          BUCKET: !Ref ImagesBucket
+          TABLE: !Ref DecisionsTable
+          MODEL_ID: !Ref ModelId
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - S3WritePolicy: { BucketName: !Ref ImagesBucket }
+        - DynamoDBCrudPolicy: { TableName: !Ref DecisionsTable }
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*
+      Events:
+        Analyze:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: /analyze, Method: POST }
+        Approve:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: /approve, Method: POST }
+
+Outputs:
+  ApiUrl:
+    Description: Paste into config.js as API_BASE
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com
+  ImagesBucketName:
+    Value: !Ref ImagesBucket
+  DecisionsTableName:
+    Value: !Ref DecisionsTable
