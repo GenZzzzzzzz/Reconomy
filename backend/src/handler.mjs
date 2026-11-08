@@ -7,7 +7,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
-  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, normalizeItem, decide, buildReason,
+  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, normalizeItem, applyCatalogMatch, planDecisions, buildReason,
 } from './decision.mjs';
 
 const { BUCKET, TABLE, MODEL_ID, ALLOWED_ORIGIN = '*' } = process.env;
@@ -65,7 +65,7 @@ async function analyzeRoute(body) {
   }))));
 
   const rawItems = await identifyItems(buffers);
-  const items = rawItems.map((r) => normalizeItem(r, buffers.length)).map((it) => ({ ...it, decision: decide(it) }));
+  const items = planDecisions(rawItems.map((r) => applyCatalogMatch(normalizeItem(r, buffers.length), null)));
 
   const reasons = await explain(items).catch((e) => { console.error('explain failed', e); return null; });
   items.forEach((it, i) => {
@@ -140,10 +140,12 @@ async function explain(items) {
   const facts = items.map((it, i) => ({
     index: i, name: it.name, condition: it.condition, defects: it.defects,
     recommended: it.decision.best, savedVersusScrap: it.decision.savings,
-    netProfitByOption: Object.fromEntries(OPTIONS.filter((k) => it.decision.results[k].viable).map((k) => [k, it.decision.results[k].net])),
+    netRecoveryValueByOption: Object.fromEntries(it.decision.ranked.map((k) => [k, it.decision.results[k].net])),
     notViable: OPTIONS.filter((k) => !it.decision.results[k].viable),
+    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size } : null,
+    greenerOption: it.decision.greener ? { route: it.decision.greener.route, costsLess: it.decision.greener.gap } : null,
   }));
-  const prompt = `For each returned item below, write 2 short sentences for a store manager explaining why the recommended route earns the most money.
+  const prompt = `For each returned item below, write 2 short sentences for a store manager explaining why the recommended route brings back the most money (net recovery value). If it is a bundle, say it is sold as a lot with other items. If a greener option is given, mention it in a few words.
 Use the exact dollar figures given. Mention the money saved versus scrapping. Do not invent numbers.
 Return ONLY a JSON array of strings, in the same order.
 ${JSON.stringify(facts)}`;

@@ -1,6 +1,6 @@
 {
   "_note": "SAMPLE business rates. Replace with your store's real numbers and re-run scripts/setup_aws.py --data-only.",
-  "version": "sample-2026-11",
+  "version": "sample-2026-11-v2",
   "feeRate": 0.12,
   "handling": 5,
   "donateTaxRate": 0.25,
@@ -11,32 +11,38 @@
     "electronics": {
       "retention": 0.55,
       "salvage": 0.08,
-      "disposal": 6
+      "disposal": 6,
+      "depreciation": 0.02
     },
     "apparel": {
       "retention": 0.4,
       "salvage": 0.02,
-      "disposal": 1
+      "disposal": 1,
+      "depreciation": 0.02
     },
     "furniture": {
       "retention": 0.45,
       "salvage": 0.05,
-      "disposal": 15
+      "disposal": 15,
+      "depreciation": 0.005
     },
     "appliances": {
       "retention": 0.5,
       "salvage": 0.1,
-      "disposal": 12
+      "disposal": 12,
+      "depreciation": 0.01
     },
     "toys": {
       "retention": 0.45,
       "salvage": 0.02,
-      "disposal": 1
+      "disposal": 1,
+      "depreciation": 0.01
     },
     "other": {
       "retention": 0.35,
       "salvage": 0.03,
-      "disposal": 4
+      "disposal": 4,
+      "depreciation": 0.01
     }
   },
   "conditions": {
@@ -50,5 +56,37 @@
     "functional": 0.18,
     "missing": 0.1,
     "hygiene": 0.03
+  },
+  "routes": {
+    "_note": "Cost profile per route. sellThrough = share that sells (rest is recycled); days = time to cash, which costs value at the category's weekly depreciation.",
+    "resell": {
+      "feeRate": 0.12,
+      "fixed": 5,
+      "days": 14,
+      "sellThrough": 0.9
+    },
+    "refurbish": {
+      "feeRate": 0.12,
+      "fixed": 10,
+      "days": 21,
+      "sellThrough": 0.95,
+      "valueFactor": 0.92
+    },
+    "bundle": {
+      "_note": "Small lot of similar items on a resale marketplace: sells at lotFactor of the sum of single used prices, one listing (fixedPerLot) plus packing per item.",
+      "feeRate": 0.08,
+      "fixedPerLot": 7,
+      "perItem": 0.5,
+      "days": 7,
+      "sellThrough": 0.98,
+      "lotFactor": 0.75,
+      "minItems": 2,
+      "maxItems": 12,
+      "lowValueCostShare": 0.33
+    },
+    "donate": {
+      "taxRate": 0.25,
+      "fixed": 3
+    }
   }
 }

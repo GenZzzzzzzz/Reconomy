@@ -122,15 +122,42 @@ matched, and the AI estimate is shown and labelled as such. All rates in the pro
 The catalog and rates in `data/` are **sample data**. Replace them with your store's real numbers.
 If the Lambda is unavailable, the app keeps working with AI estimates and built-in rates, and shows a warning.
 
-## Decision logic
+## Decision logic (`logic.js`)
 
-`logic.js` is shared by the browser and the Lambda (`backend/src/decision.mjs` is a copy. Run
-`scripts/sync-logic.sh` after editing). Net profit per route:
+Built around the three gaps in the Reconomy presentation.
 
-- Resell: as-is value − 12% fees − $5 handling. Not possible with a functional fault.
-- Refurbish: refurbished value − repair cost − 12% fees − $5 handling.
-- Donate: 25% tax benefit on as-is value − $3 shipping. Not possible with a functional fault.
-- Scrap: material salvage − disposal fee.
+**1. Net recovery value is always the objective.** Every route is scored with the same formula:
 
-As-is value = original price × category retention × condition factor (× 0.92 without packaging).
-Money saved = recommended net profit − scrap net profit. All rates are assumptions, tune them in `logic.js`.
+```
+NRV = sellThrough x price + (1 - sellThrough) x salvage          expected revenue (unsold goods are recycled)
+    - fees - fixed costs - repair
+    - price x weekly depreciation x days / 7                       value lost while the item waits
+```
+
+**2. Each route has its own cost profile** (`ROUTES`, overridable in `data/rates.json` → `routes`):
+
+| Route | Sells for | Fees | Fixed | Days | Sell-through |
+|---|---|---|---|---|---|
+| Resell | used price as-is | 12% | $5 handling | 14 | 90% |
+| Refurbish | 92% of used-market value, minus repair | 12% | $10 bench labor | 21 | 95% |
+| Bundle | 75% of the lot's single prices | 8% | $7 per lot + $0.50 per item | 7 | 98% |
+| Donate | tax benefit 25% of fair value | – | $3 shipping | – | – |
+| Scrap | material value | – | disposal fee | – | – |
+
+**3. Low-value items are bundled.** After scoring each item alone, a plan-level optimiser looks at low-value
+items per category (where one listing's handling would eat at least a third of the item's value). It starts with
+all of them, removes any item that adds less to the lot than it earns alone, and accepts the lot only if it beats
+selling separately. Each member gets its own best value plus a share of the lot's surplus, so every member earns
+more in the lot. On Approve, removing an item re-prices the lot; choosing Bundle again re-forms it (`replan`).
+
+**Uncertain prices are priced cautiously.** Catalog prices are trusted. AI estimates are shaded toward the low end
+of their own range as confidence drops: `price - (1 - confidence) x (price - low)`.
+
+**Repurpose and reduce waste.** The highest NRV always wins. If a more circular route (reuse > repair > reuse in
+bulk > repurpose > recycle) is within $0.50 or 3%, it is shown as a greener option. The result shows how many
+items were kept in use instead of scrapped.
+
+Money saved = recommended NRV - scrap NRV. All rates are sample assumptions.
+
+Tests: `node --test tests/logic.test.mjs` (decision engine) and
+`.venv/bin/python -m unittest discover lambda/catalog` (catalog matcher).

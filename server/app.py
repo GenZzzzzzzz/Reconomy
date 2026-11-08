@@ -60,7 +60,7 @@ STATIC = {
     "/config.js": ("config.js", "text/javascript; charset=utf-8"),
     "/logo.svg": ("logo.svg", "image/svg+xml"),
     "/home.js": ("home.js", "text/javascript; charset=utf-8"),
-    "/assets/hero-1.jpg": ("assets/hero-1.jpg", "image/jpeg"),
+    **{f"/assets/hero-{i}.jpg": (f"assets/hero-{i}.jpg", "image/jpeg") for i in range(1, 6)},
 }
 
 client = boto3.client(
@@ -226,7 +226,9 @@ def explain(facts):
         raise BadRequest("Invalid facts.")
     prompt = (
         "For each returned item below, write 2 short sentences for a store manager explaining why the "
-        "recommended route earns the most money. Use the exact dollar figures given. Mention the money saved "
+        "recommended route brings back the most money (net recovery value). If it is a bundle, say it is sold as a "
+        "lot with other items. If a greener option is given, mention it in a few words. "
+        "Use the exact dollar figures given. Mention the money saved "
         "versus scrapping. Do not invent numbers. If priceSource is the store catalog, say the price comes "
         "from the store catalog.\n"
         "Return ONLY a JSON array of strings, in the same order, no markdown.\n" + json.dumps(facts)

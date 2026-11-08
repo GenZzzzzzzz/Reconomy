@@ -812,3 +812,14 @@ button.primary:disabled { opacity: .4; box-shadow: none; }
   .brk td, .brk th { padding: 10px 4px; }
   .brk .row-note { display: none; }
 }
+
+/* ---- v6: bundle route, circularity, greener hint ---- */
+.r-bundle { color: #fbbf24; border-color: rgba(251, 191, 36, .45); background: rgba(251, 191, 36, .08); }
+.bar-l .circ { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+.rec-lot { margin: 6px 0 0; font-size: 13px; color: #fbbf24; }
+.greener, .risk { margin: 14px 0 0; font-size: 13.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.greener { color: #6ee7b7; }
+.greener .num { color: #6ee7b7; }
+.leaf { font-size: 14px; }
+.seg-ctl span { padding: 7px 11px; }
+.cx-explain { margin: 10px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: #c6cfd9; font-size: 14.5px; line-height: 1.55; }

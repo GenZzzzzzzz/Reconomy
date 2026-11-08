@@ -1,4 +1,4 @@
-import { normalizeItem, decide, buildReason, applyRates, applyCatalogMatch } from './logic.js';
+import { normalizeItem, planDecisions, buildReason, applyRates, applyCatalogMatch, OPTIONS } from './logic.js';
 import { API_BASE } from './config.js';
 
 export const MAX_IMAGES = 8;
@@ -35,10 +35,9 @@ async function localAnalyze(dataUrls) {
   const { items: raw, catalog } = await postJson('/api/analyze', { images: dataUrls.map((u) => u.split(',')[1]) });
   // Store's real rates and catalog prices come from S3 via the reconomy-catalog Lambda.
   if (catalog?.ok) applyRates(catalog.rates);
-  const items = raw
+  const items = planDecisions(raw
     .map((r) => normalizeItem(r, dataUrls.length))
-    .map((it, i) => applyCatalogMatch(it, catalog?.ok ? catalog.matches[i] : null))
-    .map((it) => ({ ...it, decision: decide(it) }));
+    .map((it, i) => applyCatalogMatch(it, catalog?.ok ? catalog.matches[i] : null)));
   const catalogInfo = catalog?.ok
     ? { ok: true, function: catalog.function, size: catalog.catalogSize, version: catalog.catalogVersion }
     : { ok: false, error: catalog?.error || 'Catalog lookup unavailable.' };
@@ -48,8 +47,10 @@ async function localAnalyze(dataUrls) {
     priceSource: it.priceSource === 'catalog' ? `store catalog (${it.sku})` : 'AI estimate',
     originalPrice: it.estimatedOriginalPrice,
     recommended: it.decision.best, savedVersusScrap: it.decision.savings,
-    netProfitByOption: Object.fromEntries(it.decision.ranked.map((k) => [k, it.decision.results[k].net])),
-    notViable: ['resell', 'refurbish', 'donate', 'scrap'].filter((k) => !it.decision.results[k].viable),
+    netRecoveryValueByOption: Object.fromEntries(it.decision.ranked.map((k) => [k, it.decision.results[k].net])),
+    notViable: OPTIONS.filter((k) => !it.decision.results[k].viable),
+    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size } : null,
+    greenerOption: it.decision.greener ? { route: it.decision.greener.route, costsLess: it.decision.greener.gap } : null,
   }));
   let reasons = null;
   try { reasons = (await postJson('/api/explain', { facts })).reasons; } catch { /* fall back to rules */ }
@@ -139,7 +140,7 @@ function hash(s) {
 
 async function mockAnalyze(dataUrls) {
   await new Promise((r) => setTimeout(r, 4800));
-  const items = dataUrls.map((u, i) => {
+  const raw = dataUrls.map((u, i) => {
     const h = hash(u);
     const p = CATALOG[h % CATALOG.length];
     const item = normalizeItem({
@@ -148,8 +149,8 @@ async function mockAnalyze(dataUrls) {
       hasPackaging: (h >> 13) % 2 === 0, confidence: 0.7 + ((h >> 11) % 25) / 100,
       notes: 'Simulated result (demo mode).', imageIndexes: [i],
     }, dataUrls.length);
-    const decision = decide(item);
-    return { ...item, decision, reason: buildReason(item, decision) };
+    return applyCatalogMatch(item, null);
   });
+  const items = planDecisions(raw).map((it) => ({ ...it, reason: buildReason(it, it.decision) }));
   return { mode: 'demo', id: null, items };
 }

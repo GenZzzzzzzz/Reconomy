@@ -1,6 +1,6 @@
 import {
-  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, OPTION_LABEL, FEE_RATE, HANDLING, DONATE_TAX_RATE,
-  NO_PACKAGING_FACTOR, RATES_SOURCE, usd, summarize,
+  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, OPTION_LABEL, CIRCULAR,
+  NO_PACKAGING_FACTOR, RATES_SOURCE, usd, summarize, replan,
 } from './logic.js';
 import * as api from './api.js';
 import { homeHTML, bindHome } from './home.js';
@@ -159,7 +159,7 @@ function itemList() {
               ${imgsFor(it)[0] ? `<img src="${imgsFor(it)[0]}" alt="">` : '<span class="qimg-empty"></span>'}
               <span class="qmeta"><span class="qname">${esc(it.name)}</span><span class="rchip r-${k}">${OPTION_LABEL[k]}</span></span>
             </button>
-            <span class="qval">${num(usd(it.decision.results[k].net), 'Net profit of this route.')}</span>
+            <span class="qval">${num(usd(it.decision.results[k].net), 'Net recovery value of this route.')}</span>
           </li>`;
         }).join('')}
       </ul>
@@ -226,7 +226,7 @@ function assessDetail(it) {
       <div class="tiles">
         ${priceTile(it)}
         <div class="tile"><span class="label">Value in current condition</span>
-          ${num(usd(it.decision.asIs), `Original price x ${pct(CATEGORIES[it.category].retention)} used-market retention x ${CONDITIONS[it.condition].factor} condition factor${it.hasPackaging ? '' : ` x ${NO_PACKAGING_FACTOR} for missing packaging`}. Rates from ${RATES_SOURCE}.`, 'tile-v')}
+          ${num(usd(it.decision.asIs), `Decision price ${usd(it.decision.valuation)} x ${pct(CATEGORIES[it.category].retention)} used-market retention x ${CONDITIONS[it.condition].factor} condition factor${it.hasPackaging ? '' : ` x ${NO_PACKAGING_FACTOR} for missing packaging`}. Rates from ${RATES_SOURCE}.`, 'tile-v')}
           <span class="tile-sub">What it sells for as-is</span></div>
         <div class="tile"><span class="label">AI confidence</span>
           ${num(pct(it.confidence), 'How sure the model is about its identification. Below 60% is worth a manual check.', 'tile-v')}
@@ -265,20 +265,6 @@ function screenAssess() {
 }
 
 // ---------- 3. Compare ----------
-const REV_TIP = {
-  resell: 'Used price for the item as-is.',
-  refurbish: 'Refurbished price, close to the full used-market value.',
-  donate: () => `Tax benefit: fair value x ${pct(DONATE_TAX_RATE)}.`,
-  scrap: 'Material value paid by the recycler.',
-};
-const costTip = (it, k) => ({
-  resell: `${pct(FEE_RATE)} marketplace fees plus $${HANDLING} handling.`,
-  refurbish: `Repairs ${usd(it.decision.repairCost)}, ${pct(FEE_RATE)} fees and $${HANDLING} handling.`,
-  donate: 'Shipping to the partner charity.',
-  scrap: 'Disposal fee for this category.',
-}[k]);
-const revTip = (k) => (typeof REV_TIP[k] === 'function' ? REV_TIP[k]() : REV_TIP[k]);
-
 function compareDetail(it) {
   const d = it.decision;
   const best = d.best;
@@ -289,18 +275,18 @@ function compareDetail(it) {
     const w = (Math.abs(x.net) / maxAbs) * 100;
     const cls = !x.viable ? 'off' : k === best ? 'best' : x.net < 0 ? 'neg' : '';
     return `<li class="bar ${cls}">
-      <span class="bar-l">${OPTION_LABEL[k]}${k === best ? ' <span class="rec">Best</span>' : ''}${!x.viable ? ' <span class="nv">Not viable</span>' : ''}</span>
+      <span class="bar-l">${OPTION_LABEL[k]}${k === best ? ' <span class="rec">Best</span>' : ''}${!x.viable ? ' <span class="nv">Not viable</span>' : ''}<span class="circ">${CIRCULAR[k]}</span></span>
       <span class="bar-t"><span style="width:${w.toFixed(1)}%"></span></span>
-      ${num(usd(x.net), x.viable ? 'Net profit: revenue minus costs.' : `Not possible for this item: ${x.note}`)}
+      ${num(usd(x.net), x.viable ? 'Net recovery value: expected revenue minus all costs, including value lost while waiting.' : `Not possible for this item: ${x.note}`)}
     </li>`;
   }).join('');
   const rows = OPTIONS.map((k) => {
     const x = d.results[k];
     return `<tr class="${k === best ? 'is-best' : ''} ${x.viable ? '' : 'is-off'}">
       <th scope="row">${OPTION_LABEL[k]}<span class="row-note">${esc(x.note)}</span></th>
-      <td class="r">${num(usd(x.revenue), revTip(k))}</td>
-      <td class="r">${num(usd(x.costs), costTip(it, k))}</td>
-      <td class="r">${num(usd(x.net), 'Revenue minus costs.')}</td>
+      <td class="r">${num(usd(x.revenue), x.revNote)}</td>
+      <td class="r">${num(usd(x.costs), x.costNote)}</td>
+      <td class="r">${num(usd(x.net), 'Expected revenue minus all costs.')}</td>
     </tr>`;
   }).join('');
   return `
@@ -311,19 +297,22 @@ function compareDetail(it) {
             <span class="badge">Recommended</span>
             <h2 class="rec-route">${OPTION_LABEL[best]}</h2>
             <p class="rec-item">${esc(it.name)}</p>
+            ${best === 'bundle' ? `<p class="rec-lot">Lot ${esc(r.lot.id)} · with ${r.lot.items.filter((n) => n !== it.name).map(esc).join(', ') || 'other items'}</p>` : ''}
           </div>
           <div class="rec-kpis">
-            <div><span class="label">Net profit</span>${num(usd(r.net), 'Revenue minus costs for the recommended route.', 'rec-big')}</div>
-            <div><span class="label">Saved vs scrap</span>${num(usd(d.savings), 'Net profit of the recommended route minus the net profit of scrapping.', 'rec-big accent')}</div>
+            <div><span class="label">Net recovery value</span>${num(usd(r.net), 'Expected revenue minus all costs for the recommended route.', 'rec-big')}</div>
+            <div><span class="label">Saved vs scrap</span>${num(usd(d.savings), 'Net recovery value of the recommended route minus that of scrapping.', 'rec-big accent')}</div>
           </div>
         </div>
+        ${d.greener ? `<p class="greener"><span class="leaf" aria-hidden="true">♻</span>${OPTION_LABEL[d.greener.route]} is a greener option for ${num(usd(d.greener.gap), 'How much less it brings back than the recommended route.')} less.</p>` : ''}
+        ${d.haircut > 0 ? `<p class="risk">Priced cautiously: ${num(usd(d.haircut), 'AI price estimates are shaded toward the low end of their range when the AI is less sure, so an uncertain guess cannot push a risky route to the top.')} below the AI's typical price because confidence is ${num(pct(it.confidence), 'AI confidence for this item.')}.</p>` : ''}
         <div class="rec-why">
           <span class="label">Why ${OPTION_LABEL[best].toLowerCase()}${it.reasonSource === 'bedrock' ? ' · written by Amazon Bedrock' : ''}</span>
           <p>${esc(it.reason)}</p>
         </div>
       </section>
       <section class="card">
-        <h3 class="sec-h">Net profit by route</h3>
+        <h3 class="sec-h">Net recovery value by route</h3>
         <ul class="bars">${bars}</ul>
       </section>
       <section class="card table-wrap">
@@ -339,7 +328,7 @@ function compareDetail(it) {
 function screenCompare() {
   const it = state.items[state.active];
   return `
-    ${title('Compare the routes', 'Every route is priced by net profit. The best one is recommended.')}
+    ${title('Compare the routes', 'Every route is priced by net recovery value, after all of its costs. The best one is recommended.')}
     <div class="ws-main">${itemList()}${compareDetail(it)}</div>
     ${actionBar(
       `<span>Item</span> ${num(`${state.active + 1}/${state.items.length}`, 'Position of this item in the list.')}`,
@@ -362,16 +351,16 @@ function screenApprove() {
         <span>${OPTION_LABEL[o]}</span></label>`;
     }).join('');
     return `<li class="ap-row ${k !== it.decision.best ? 'changed' : ''}">
-      <div class="ap-item">${imgsFor(it)[0] ? `<img src="${imgsFor(it)[0]}" alt="">` : ''}<span><b>${esc(it.name)}</b><span class="ap-sub">AI recommends ${OPTION_LABEL[it.decision.best].toLowerCase()}</span></span></div>
+      <div class="ap-item">${imgsFor(it)[0] ? `<img src="${imgsFor(it)[0]}" alt="">` : ''}<span><b>${esc(it.name)}</b><span class="ap-sub">AI recommends ${OPTION_LABEL[it.decision.best].toLowerCase()}${k === 'bundle' ? ` · lot ${esc(it.decision.results.bundle.lot.id)} of ${it.decision.results.bundle.lot.size}` : ''}</span></span></div>
       <fieldset class="seg-ctl"><legend class="sr-only">Route for ${esc(it.name)}</legend>${seg}</fieldset>
-      <div class="ap-net">${num(usd(net), 'Expected net profit for the selected route.')}
+      <div class="ap-net">${num(usd(net), 'Net recovery value of the selected route.')}
         ${diff < 0 ? `<span class="ap-diff">${num(usd(diff), 'Profit lost compared with the AI recommendation.', 'bad')}</span>` : ''}</div>
     </li>`;
   }).join('');
   return `
     ${title('Approve the plan', 'The AI recommendation is preselected. Change a route only if you need to.')}
     <div class="kpis">
-      <div class="card kpi"><span class="label">Total net profit</span>${num(usd(t.net), 'Sum of net profit across all items with the selected routes.', 'kpi-v')}</div>
+      <div class="card kpi"><span class="label">Net recovery value</span>${num(usd(t.net), 'Sum across all items with the selected routes.', 'kpi-v')}</div>
       <div class="card kpi"><span class="label">Saved vs scrapping</span>${num(usd(t.saved), 'How much more the plan earns than scrapping every item.', 'kpi-v accent')}</div>
       <div class="card kpi"><span class="label">Changed by you</span>${num(overrides, 'Items where you picked a different route than the AI.', 'kpi-v')}</div>
     </div>
@@ -389,6 +378,7 @@ const NEXT = {
   refurbish: ['Send to repair', 'Run a quality check', 'List as refurbished'],
   donate: ['Pack the item', 'Ship to the partner charity', 'File the donation receipt'],
   scrap: ['Remove batteries and data', 'Send to the recycler', 'Log the salvage payment'],
+  bundle: ['Group with the other items in the lot', 'List the lot as one listing', 'Ship the lot together'],
 };
 
 function planCSV() {
@@ -398,7 +388,7 @@ function planCSV() {
     if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return `"${s.replace(/"/g, '""')}"`;
   };
-  const head = ['Item', 'Category', 'Condition', 'Approved route', 'AI recommendation', 'Net profit (USD)', 'Saved vs scrap (USD)', 'Price source', 'Reason'];
+  const head = ['Item', 'Category', 'Condition', 'Approved route', 'AI recommendation', 'Net recovery value (USD)', 'Saved vs scrap (USD)', 'Price source', 'Reason'];
   const lines = state.items.map((it, i) => {
     const k = chosenKey(i);
     const r = it.decision.results[k];
@@ -427,8 +417,8 @@ function screenResult() {
           ${k !== it.decision.best ? `<span class="chip warn">Changed from ${OPTION_LABEL[it.decision.best].toLowerCase()}</span>` : ''}</div>
       </div>
       <div class="res-kv">
-        <div><span class="label">Net profit</span>${num(usd(r.net), 'Revenue minus costs for the approved route.')}</div>
-        <div><span class="label">Saved vs scrap</span>${num(usd(saved), 'Approved route net profit minus scrapping net profit.', 'accent')}</div>
+        <div><span class="label">Net recovery value</span>${num(usd(r.net), 'Expected revenue minus all costs for the approved route.')}</div>
+        <div><span class="label">Saved vs scrap</span>${num(usd(saved), 'Approved route minus scrapping.', 'accent')}</div>
       </div>
       <p class="res-why">${esc(k === it.decision.best ? it.reason : `You picked ${OPTION_LABEL[k].toLowerCase()} instead of the recommended ${OPTION_LABEL[it.decision.best].toLowerCase()}.`)}</p>
       <span class="label">Next steps</span>
@@ -444,10 +434,10 @@ function screenResult() {
     <div class="card res-hero">
       <div class="res-hero-main"><span class="label">Saved versus scrapping everything</span>${num(usd(t.saved), 'Extra money recovered compared with scrapping every item.', 'huge')}</div>
       <div class="res-hero-side">
-        <div><span class="label">Total net profit</span>${num(usd(t.net), 'Sum of net profit across all approved routes.', 'kpi-v')}</div>
-        <div><span class="label">Items</span>${num(state.items.length, 'Products in this plan.', 'kpi-v')}</div>
+        <div><span class="label">Net recovery value</span>${num(usd(t.net), 'Sum across all approved routes.', 'kpi-v')}</div>
+        <div><span class="label">Kept in use</span>${num(`${t.diverted}/${state.items.length}`, 'Items resold, refurbished, bundled or donated instead of scrapped.', 'kpi-v')}</div>
       </div>
-      <ul class="route-sum">${byRoute.map((x) => `<li><span class="rchip r-${x.k}">${OPTION_LABEL[x.k]}</span>${num(x.n, `Items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}<span class="muted">items ·</span>${num(usd(x.net), `Net profit from items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}</li>`).join('')}</ul>
+      <ul class="route-sum">${byRoute.map((x) => `<li><span class="rchip r-${x.k}">${OPTION_LABEL[x.k]}</span>${num(x.n, `Items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}<span class="muted">items ·</span>${num(usd(x.net), `Net recovery value from items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}</li>`).join('')}</ul>
     </div>
     <div class="res-grid">${list}</div>
     <p class="tagline">AWS enables scalable AI-powered inventory recovery.</p>
@@ -579,6 +569,7 @@ function bind() {
     document.querySelectorAll('[data-route]').forEach((s) => s.addEventListener('change', () => {
       const i = Number(s.dataset.route);
       state.chosen[i] = s.value;
+      ({ chosen: state.chosen } = replan(state.items, state.chosen, i)); // re-price lots
       render(false);
       document.querySelector(`input[name="route${i}"]:checked`)?.focus();
     }));
