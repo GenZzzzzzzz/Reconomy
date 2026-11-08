@@ -3,6 +3,7 @@ import {
   NO_PACKAGING_FACTOR, RATES_SOURCE, usd, summarize,
 } from './logic.js';
 import * as api from './api.js';
+import { homeHTML, bindHome } from './home.js';
 
 const { analyze, approve, resizeImage, MAX_IMAGES } = api;
 await api.detectMode();
@@ -20,6 +21,12 @@ let state = fresh();
 const $app = document.getElementById('app');
 const $steps = document.getElementById('steps');
 const $mode = document.getElementById('mode');
+const $navCta = document.getElementById('nav-cta');
+
+// Routing: #assess (or #assess/...) opens the tool, anything else is the home page.
+const viewFromHash = () => (location.hash.startsWith('#assess') ? 'app' : 'home');
+let view = viewFromHash();
+let unbindHome = () => {};
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pct = (n) => Math.round(n * 100) + '%';
@@ -38,6 +45,14 @@ function renderSteps() {
     const c = i < state.step ? 'done' : i === state.step ? 'current' : '';
     return `<li class="${c}" ${i === state.step ? 'aria-current="step"' : ''}><span class="n">0${i + 1}</span><span class="t">${s}</span></li>`;
   }).join('');
+}
+
+function renderNav() {
+  document.body.classList.toggle('is-home', view === 'home');
+  document.body.classList.toggle('is-app', view === 'app');
+  $navCta.textContent = view === 'home' ? 'Assess returns' : 'Home';
+  $navCta.href = view === 'home' ? '#assess' : '#';
+  $navCta.classList.toggle('primary', view === 'home');
   $mode.textContent = { aws: 'Live · AWS', local: 'Live · Bedrock', demo: 'Demo mode' }[mode];
   $mode.className = 'mode ' + (isReal ? 'live' : 'demo');
   $mode.title = {
@@ -247,11 +262,31 @@ function screenResult() {
 const screens = [screenUpload, screenAssess, screenCompare, screenApprove, screenResult];
 
 function render(focus = true) {
+  renderNav();
+  unbindHome();
+  unbindHome = () => {};
+  if (view === 'home') {
+    $app.innerHTML = homeHTML({ num });
+    unbindHome = bindHome($app);
+    return;
+  }
+  document.getElementById('topnav').classList.add('solid');
   renderSteps();
   $app.innerHTML = screens[state.step]();
   bind();
-  if (focus) $app.focus();
+  if (focus) $app.focus({ preventScroll: true });
 }
+
+// Hash changes: switch view, or scroll to a home section (#problem, #how, #aws ...).
+window.addEventListener('hashchange', () => {
+  const next = viewFromHash();
+  const changed = next !== view;
+  view = next;
+  if (changed) { render(false); window.scrollTo(0, 0); }
+  if (view === 'home' && location.hash.length > 1) {
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
 const go = (n) => { state.step = n; state.error = ''; render(); window.scrollTo(0, 0); };
 
 let adding = Promise.resolve();
@@ -339,3 +374,7 @@ function bind() {
 }
 
 render(false);
+
+// Skip link moves focus without touching the hash (the hash is used for routing).
+document.querySelector('.skip')?.addEventListener('click', (e) => { e.preventDefault(); $app.focus(); });
+if (view === 'home' && location.hash.length > 1) document.getElementById(location.hash.slice(1))?.scrollIntoView();
