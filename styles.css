@@ -348,3 +348,38 @@ body.is-home main { max-width: none; padding: 0; }
   .band { padding: 72px 0; }
   .loss-div { display: none; }
 }
+
+/* ---- before/after comparison tables ---- */
+.cmp-card { padding: 8px 24px; margin-bottom: 16px; }
+.cmp { font-size: 15px; }
+.cmp th, .cmp td { padding: 16px 12px; vertical-align: middle; }
+.cmp thead th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.cmp thead th:first-child { padding-left: 0; }
+.cmp tbody th, .cmp tfoot th { font-size: 15px; color: var(--text); font-weight: 500; padding-left: 0; }
+.cmp td .num { font-size: 16px; color: var(--text); }
+.cmp td .num.accent { color: var(--cyan); }
+.cmp tbody tr:last-child th, .cmp tbody tr:last-child td { border-bottom: 1px solid var(--line); }
+.cmp tfoot th, .cmp tfoot td { border-bottom: 0; padding-top: 20px; padding-bottom: 20px; }
+.cmp tfoot th { font-weight: 700; }
+.cmp tfoot td .num { font-weight: 600; }
+.cmp .big-save { font-size: 26px !important; }
+.cmp .muted { color: var(--muted); font-size: 14px; }
+.bench td .num { font-size: 15px; }
+.fine { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+
+@media (max-width: 720px) {
+  .cmp-card { padding: 8px 16px; }
+  .cmp thead { display: none; }
+  .cmp, .cmp tbody, .cmp tfoot, .cmp tr, .cmp th, .cmp td { display: block; width: 100%; }
+  .cmp tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .cmp tfoot tr { border-bottom: 0; }
+  .cmp th, .cmp td { border: 0 !important; padding: 4px 0 !important; text-align: left; }
+  .cmp td { display: flex; justify-content: space-between; align-items: center; }
+  .cmp td::before { content: attr(data-label); color: var(--muted); font-size: 13px; }
+  .cmp .big-save { font-size: 22px !important; }
+}
+
+/* Stat-card tips are anchored to the card, so they always fit inside it at any screen width. */
+.stat { position: relative; }
+.stat .tip { position: static; }
+.stat .tip .bubble { left: 12px; right: 12px; width: auto; bottom: calc(100% - 12px); }
