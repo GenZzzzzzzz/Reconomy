@@ -583,7 +583,7 @@ body.is-app main { padding: 8px 28px 0; }
 .brk td, .brk th { padding: 12px 8px; }
 
 /* approve */
-.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+.kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px; }
 .kpi { padding: 18px 22px; }
 .kpi-v { font-size: 30px; font-weight: 600; color: var(--text); }
 .kpi-v.accent { color: var(--cyan); }

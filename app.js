@@ -305,7 +305,6 @@ function compareDetail(it) {
             ${best === 'bundle' ? `<p class="rec-lot">Lot ${esc(r.lot.id)} · with ${r.lot.items.filter((n) => n !== it.name).map(esc).join(', ') || 'other items'}</p>` : ''}
           </div>
           <div class="rec-kpis">
-            <div><span class="label">Net recovery value</span>${num(usd(r.net), 'Expected revenue minus all costs for the recommended route.', 'rec-big')}</div>
             <div><span class="label">Saved vs scrap</span>${num(usd(d.savings), 'Net recovery value of the recommended route minus that of scrapping.', 'rec-big accent')}</div>
           </div>
         </div>
@@ -365,7 +364,6 @@ function screenApprove() {
   return `
     ${title('Approve the plan', 'Review any amber flags first. The AI recommendation is preselected, but you can choose another route.')}
     <div class="kpis">
-      <div class="card kpi"><span class="label">Net recovery value</span>${num(usd(t.net), 'Sum across all items with the selected routes.', 'kpi-v')}</div>
       <div class="card kpi"><span class="label">Saved vs scrapping</span>${num(usd(t.saved), 'How much more the plan earns than scrapping every item.', 'kpi-v accent')}</div>
       <div class="card kpi"><span class="label">Changed by you</span>${num(overrides, 'Items where you picked a different route than the AI.', 'kpi-v')}</div>
     </div>
@@ -423,7 +421,6 @@ function screenResult() {
           ${it.decision.needsReview ? '<span class="chip warn">Evidence needs review</span>' : ''}</div>
       </div>
       <div class="res-kv">
-        <div><span class="label">Net recovery value</span>${num(usd(r.net), 'Expected revenue minus all costs for the approved route.')}</div>
         <div><span class="label">Saved vs scrap</span>${num(usd(saved), 'Approved route minus scrapping.', 'accent')}</div>
       </div>
       <p class="res-why">${esc(k === it.decision.best ? it.reason : `You picked ${OPTION_LABEL[k].toLowerCase()} instead of the recommended ${OPTION_LABEL[it.decision.best].toLowerCase()}.`)}</p>
@@ -439,7 +436,6 @@ function screenResult() {
     <div class="card res-hero">
       <div class="res-hero-main"><span class="label">Saved versus scrapping everything</span>${num(usd(t.saved), 'Extra money recovered compared with scrapping every item.', 'huge')}</div>
       <div class="res-hero-side">
-        <div><span class="label">Net recovery value</span>${num(usd(t.net), 'Sum across all approved routes.', 'kpi-v')}</div>
         <div><span class="label">Kept in use</span>${num(`${t.diverted}/${state.items.length}`, 'Items resold, refurbished, bundled or donated instead of scrapped.', 'kpi-v')}</div>
       </div>
       <ul class="route-sum">${byRoute.map((x) => `<li><span class="rchip r-${x.k}">${OPTION_LABEL[x.k]}</span>${num(x.n, `Items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}<span class="muted">items ·</span>${num(usd(x.net), `Net recovery value from items routed to ${OPTION_LABEL[x.k].toLowerCase()}.`)}</li>`).join('')}</ul>
