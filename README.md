@@ -17,10 +17,11 @@ Statistics on the home page (each has an info tip with its source):
 NRF and Happy Returns, *2025 Retail Returns Landscape* (15.8% of sales, $849.9B, 19.3% online) and McKinsey
 reverse logistics research ($200B spent recovering value; ~50% of worth recovered, as cited by GSPANN).
 
-The **Before and after** table estimates returns cost for an online retailer with $1M in sales. It combines the
-NRF return rate and McKinsey recovery rate with Locus's published manual vs AI-powered benchmarks (processing cost
-15-30% of item price, ~15% lower per unit with AI, 8-12 → 3-5 days to shelf, 1-3% weekly depreciation). Locus is a
-vendor, and these are industry benchmarks, not measured Reconomy results. The model is at the top of `home.js`.
+The **Before and after** section compares returns cost for an online retailer with $1M in sales, manual vs
+AI-driven decisions. Before uses the manual end of each published range, after uses the AI-driven end:
+recovery below 40% vs above 70% of item value and 15-30% lower cost per return (ReturnPro maturity model),
+processing cost 15-30% of item price and 8-12 vs 3-5 days to shelf (Locus), and the NRF 19.3% online return rate.
+ReturnPro and Locus are vendors; these are benchmarks, not measured Reconomy results. The model is in `home.js`.
 
 ## Architecture
 
