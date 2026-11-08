@@ -60,7 +60,7 @@ STATIC = {
     "/config.js": ("config.js", "text/javascript; charset=utf-8"),
     "/logo.svg": ("logo.svg", "image/svg+xml"),
     "/home.js": ("home.js", "text/javascript; charset=utf-8"),
-    **{f"/assets/hero-{i}.jpg": (f"assets/hero-{i}.jpg", "image/jpeg") for i in range(1, 6)},
+    "/assets/hero-1.jpg": ("assets/hero-1.jpg", "image/jpeg"),
 }
 
 client = boto3.client(

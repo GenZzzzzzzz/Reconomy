@@ -8,10 +8,11 @@ and the money saved versus scrapping.
 
 ## Pages
 
-- **Home** (`#`): full-screen hero carousel on the returns problem (5 slides, auto-advance with pause, keyboard
-  arrows, no motion with *reduced motion*), then problem stats, the four routes, the 5-step flow and AWS services.
-  Code: `home.js`. Photos in `assets/` are from Unsplash.
-- **Tool** (`#assess`): the 5-step flow Upload → Assess → Compare → Approve → Result.
+- **Home** (`#`): our title plus the before/after value of AI decisions: loss per returned dollar, a $100M
+  scale-up, the comparison table and industry benchmarks. Code: `home.js`. Hero photo from Unsplash.
+- **Tool** (`#assess`): an operations-desk layout for Upload → Assess → Compare → Approve → Result.
+  Clickable stepper, sticky action bar, item list with detail panel, condition-grade meter, profit-by-route chart,
+  segmented route picker on Approve, next-step checklists and a CSV export of the approved plan.
 
 Statistics on the home page (each has an info tip with its source):
 NRF and Happy Returns, *2025 Retail Returns Landscape* (15.8% of sales, $849.9B, 19.3% online) and McKinsey
