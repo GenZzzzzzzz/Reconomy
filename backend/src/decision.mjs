@@ -1,14 +1,17 @@
-// Reconomy decision engine. Pure functions, shared by the browser and the deployable Lambda backend.
-// Source of truth is this file. backend/src/decision.mjs is a copy made by scripts/sync-logic.sh.
-// All money values are in USD. Rates can be replaced with the store's own numbers from S3 (applyRates).
+// Reconomy decision engine.
+// One shared, explainable measure for every route:
+//   conservative recovery = expected money back - all route costs - wait-time value loss.
 //
-// One objective for every route: NET RECOVERY VALUE (NRV), the money a route is expected to bring back.
-//   NRV = expected sale revenue + fallback salvage - fees - fixed costs - repair - value lost while waiting
-// Routes differ only in their cost profile (ROUTES below), so adding or tuning a route is a data change.
-// A plan-level step then bundles low-value items into lots when sharing one listing and shipment pays off.
+// The engine uses evidence before economics:
+//   1. Prefer a verified catalog price.
+//   2. Otherwise use the low side of the AI market-price range when evidence is weak.
+//   3. Only bundle compatible, low-value items when a shared lot beats selling them separately.
+//   4. Flag weak evidence and near-ties for a manager to check.
+//
+// Source of truth is this file. scripts/sync-logic.sh copies it to backend/src/decision.mjs.
 
 export const CATEGORIES = {
-  //            share of new price on the used market | material value | disposal fee | value lost per week
+  //            used-market share of a new reference | salvage | disposal | loss of market value per week
   electronics: { label: 'Electronics', retention: 0.55, salvage: 0.08, disposal: 6, depreciation: 0.02 },
   apparel:     { label: 'Apparel', retention: 0.40, salvage: 0.02, disposal: 1, depreciation: 0.02 },
   furniture:   { label: 'Furniture', retention: 0.45, salvage: 0.05, disposal: 15, depreciation: 0.005 },
@@ -18,26 +21,24 @@ export const CATEGORIES = {
 };
 
 export const CONDITIONS = {
-  A: { label: 'A · Like new', factor: 0.95 },
-  B: { label: 'B · Good', factor: 0.80 },
-  C: { label: 'C · Fair', factor: 0.55 },
-  D: { label: 'D · Poor', factor: 0.25 },
+  A: { label: 'A · Like new', factor: 0.95, sellability: 1.00 },
+  B: { label: 'B · Good', factor: 0.80, sellability: 0.94 },
+  C: { label: 'C · Fair', factor: 0.55, sellability: 0.78 },
+  D: { label: 'D · Poor', factor: 0.25, sellability: 0.58 },
 };
 
 export const DEFECTS = {
-  cosmetic:   { label: 'Cosmetic damage', repair: 0.06 },
-  functional: { label: 'Functional fault', repair: 0.18 },
-  missing:    { label: 'Missing parts', repair: 0.10 },
-  hygiene:    { label: 'Needs deep cleaning', repair: 0.03 },
+  cosmetic:   { label: 'Cosmetic damage', repair: 0.06, sellability: 0.95 },
+  functional: { label: 'Functional fault', repair: 0.18, sellability: 0.00 },
+  missing:    { label: 'Missing parts', repair: 0.10, sellability: 0.80 },
+  hygiene:    { label: 'Needs deep cleaning', repair: 0.03, sellability: 0.88 },
 };
 
-// Cost profile of every route. sellThrough = share that actually sells; the rest falls back to recycling.
-// days = time until the money comes in, which costs value at the category's weekly depreciation.
+// Each route has a data-only cost profile. Rates can be overridden through data/rates.json in S3.
 export const ROUTES = {
   resell:    { feeRate: 0.12, fixed: 5, days: 14, sellThrough: 0.90 },
-  refurbish: { feeRate: 0.12, fixed: 10, days: 21, sellThrough: 0.95, valueFactor: 0.92 }, // fixed = bench labor: inspect, clean, test, repack
-  // A small lot of similar items sells at a discount to the sum of single prices (lotFactor), with one listing.
-  // Only low-value items qualify: those where one listing's handling would eat at least lowValueCostShare of their value.
+  refurbish: { feeRate: 0.12, fixed: 10, days: 21, sellThrough: 0.95, valueFactor: 0.92 },
+  // A compatible small lot: one listing and shipment shared across low-value items.
   bundle:    { feeRate: 0.08, fixedPerLot: 7, perItem: 0.5, days: 7, sellThrough: 0.98, lotFactor: 0.75, minItems: 2, maxItems: 12, lowValueCostShare: 0.33 },
   donate:    { taxRate: 0.25, fixed: 3 },
   scrap:     {},
@@ -45,365 +46,528 @@ export const ROUTES = {
 
 export const OPTIONS = ['resell', 'refurbish', 'bundle', 'donate', 'scrap'];
 export const OPTION_LABEL = { resell: 'Resell', refurbish: 'Refurbish', bundle: 'Bundle', donate: 'Donate', scrap: 'Scrap' };
-// Circularity, best first: reuse as-is, repair, reuse in bulk, repurpose by others, recycle materials.
 export const CIRCULAR = { resell: 'Reuse', refurbish: 'Repair', bundle: 'Reuse in bulk', donate: 'Repurpose', scrap: 'Recycle' };
 const CIRCULAR_RANK = { resell: 0, refurbish: 1, bundle: 2, donate: 3, scrap: 4 };
 
-export let NO_PACKAGING_FACTOR = 0.92; // price penalty without original packaging
+export let NO_PACKAGING_FACTOR = 0.92;
 export let RATES_SOURCE = 'built-in defaults';
-// Kept for older callers and tooltips.
+// Compatibility exports used by existing UI/tooltips.
 export let FEE_RATE = ROUTES.resell.feeRate;
 export let HANDLING = ROUTES.resell.fixed;
 export let DONATE_TAX_RATE = ROUTES.donate.taxRate;
 
+const DEFAULTS = JSON.parse(JSON.stringify({ CATEGORIES, CONDITIONS, DEFECTS, ROUTES, noPackagingFactor: NO_PACKAGING_FACTOR }));
 const round2 = (n) => Math.round(n * 100) / 100;
+const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+const validNumber = (v) => (typeof v === 'number' || typeof v === 'string') && v !== '' && Number.isFinite(Number(v));
+const confidence = (v, fallback = 0.5) => validNumber(v) ? clamp(Number(v), 0, 1) : fallback;
 export const usd = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
-const pctTxt = (n) => `${Math.round(n * 100)}%`;
+const pct = (n) => `${Math.round(n * 100)}%`;
 
-// Accepts a number only if it is finite and within [min, max]; otherwise keeps the current value.
-const pick = (v, cur, min, max) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : cur);
+function restore(target, source) {
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, JSON.parse(JSON.stringify(source)));
+}
 
-// Applies business rates loaded from S3 (rates.json). Invalid or missing values keep their defaults.
-export function applyRates(r, source = 'S3 rates.json') {
-  if (!r || typeof r !== 'object') return;
-  // Legacy flat fields still work.
-  for (const k of ['resell', 'refurbish']) ROUTES[k].feeRate = pick(r.feeRate, ROUTES[k].feeRate, 0, 0.9);
-  ROUTES.resell.fixed = pick(r.handling, ROUTES.resell.fixed, 0, 1000);
-  ROUTES.donate.taxRate = pick(r.donateTaxRate, ROUTES.donate.taxRate, 0, 1);
-  ROUTES.donate.fixed = pick(r.donateShipping, ROUTES.donate.fixed, 0, 1000);
-  ROUTES.refurbish.valueFactor = pick(r.refurbValueFactor, ROUTES.refurbish.valueFactor, 0, 1.5);
-  NO_PACKAGING_FACTOR = pick(r.noPackagingFactor, NO_PACKAGING_FACTOR, 0, 1);
-  // Per-route cost profiles.
-  const bounds = {
-    feeRate: [0, 0.9], fixed: [0, 1000], fixedPerLot: [0, 5000], perItem: [0, 1000], days: [0, 365],
-    sellThrough: [0, 1], valueFactor: [0, 1.5], lotFactor: [0, 1.5], taxRate: [0, 1], minItems: [2, 50], maxItems: [2, 200], lowValueCostShare: [0, 10],
-  };
-  for (const [k, route] of Object.entries(ROUTES)) {
-    const n = r.routes?.[k];
-    if (!n) continue;
-    for (const f of Object.keys(route)) if (bounds[f]) route[f] = pick(n[f], route[f], ...bounds[f]);
-  }
-  for (const [k, c] of Object.entries(CATEGORIES)) {
-    const n = r.categories?.[k];
-    if (!n) continue;
-    c.retention = pick(n.retention, c.retention, 0, 1.5);
-    c.salvage = pick(n.salvage, c.salvage, 0, 1);
-    c.disposal = pick(n.disposal, c.disposal, 0, 10000);
-    c.depreciation = pick(n.depreciation, c.depreciation, 0, 0.5);
-  }
-  for (const [k, c] of Object.entries(CONDITIONS)) c.factor = pick(r.conditions?.[k], c.factor, 0, 1.5);
-  for (const [k, d] of Object.entries(DEFECTS)) d.repair = pick(r.defects?.[k], d.repair, 0, 2);
+// Reset rates for a new analysis, preventing one catalog lookup from affecting the next analysis.
+export function resetRates() {
+  restore(CATEGORIES, DEFAULTS.CATEGORIES);
+  restore(CONDITIONS, DEFAULTS.CONDITIONS);
+  restore(DEFECTS, DEFAULTS.DEFECTS);
+  restore(ROUTES, DEFAULTS.ROUTES);
+  NO_PACKAGING_FACTOR = DEFAULTS.noPackagingFactor;
+  RATES_SOURCE = 'built-in defaults';
   FEE_RATE = ROUTES.resell.feeRate;
   HANDLING = ROUTES.resell.fixed;
   DONATE_TAX_RATE = ROUTES.donate.taxRate;
-  RATES_SOURCE = r.version ? `${source} (${String(r.version).slice(0, 40)})` : source;
 }
 
-// ---------- Item input ----------
-const clampPrice = (n) => Math.min(Math.max(n, 1), 20000);
-const finite = (v) => (typeof v === 'number' || typeof v === 'string') && v !== '' && Number.isFinite(Number(v));
+const choose = (v, old, min, max) => validNumber(v) && Number(v) >= min && Number(v) <= max ? Number(v) : old;
 
-// Original price = the typical street price the AI reports, kept inside its own low-high range.
-// Falls back to the older single estimatedOriginalPrice field (older AI responses).
-function streetPrice(r) {
-  let low = finite(r.priceLow) ? clampPrice(Number(r.priceLow)) : null;
-  let high = finite(r.priceHigh) ? clampPrice(Number(r.priceHigh)) : null;
+// Apply one analysis's S3 rates. Invalid values are ignored, and every call starts from defaults.
+export function applyRates(raw, source = 'S3 rates.json') {
+  resetRates();
+  if (!raw || typeof raw !== 'object') return;
+  // Legacy flat fields remain supported.
+  ROUTES.resell.feeRate = choose(raw.feeRate, ROUTES.resell.feeRate, 0, 0.9);
+  ROUTES.refurbish.feeRate = choose(raw.feeRate, ROUTES.refurbish.feeRate, 0, 0.9);
+  ROUTES.resell.fixed = choose(raw.handling, ROUTES.resell.fixed, 0, 1000);
+  ROUTES.donate.taxRate = choose(raw.donateTaxRate, ROUTES.donate.taxRate, 0, 1);
+  ROUTES.donate.fixed = choose(raw.donateShipping, ROUTES.donate.fixed, 0, 1000);
+  ROUTES.refurbish.valueFactor = choose(raw.refurbValueFactor, ROUTES.refurbish.valueFactor, 0, 1.5);
+  NO_PACKAGING_FACTOR = choose(raw.noPackagingFactor, NO_PACKAGING_FACTOR, 0, 1);
+
+  const limits = {
+    feeRate: [0, 0.9], fixed: [0, 1000], fixedPerLot: [0, 5000], perItem: [0, 1000], days: [0, 365],
+    sellThrough: [0, 1], valueFactor: [0, 1.5], lotFactor: [0, 1.5], taxRate: [0, 1],
+    minItems: [2, 50], maxItems: [2, 200], lowValueCostShare: [0, 10], repairSuccess: [0, 1],
+  };
+  for (const [key, route] of Object.entries(ROUTES)) {
+    const update = raw.routes?.[key];
+    if (!update || typeof update !== 'object') continue;
+    for (const [field, bounds] of Object.entries(limits)) {
+      if (field in route) route[field] = choose(update[field], route[field], ...bounds);
+    }
+  }
+  for (const [key, category] of Object.entries(CATEGORIES)) {
+    const update = raw.categories?.[key];
+    if (!update || typeof update !== 'object') continue;
+    category.retention = choose(update.retention, category.retention, 0, 1.5);
+    category.salvage = choose(update.salvage, category.salvage, 0, 1);
+    category.disposal = choose(update.disposal, category.disposal, 0, 10000);
+    category.depreciation = choose(update.depreciation, category.depreciation, 0, 0.5);
+  }
+  for (const [key, condition] of Object.entries(CONDITIONS)) {
+    const update = raw.conditions?.[key];
+    condition.factor = choose(update, condition.factor, 0, 1.5);
+  }
+  for (const [key, defect] of Object.entries(DEFECTS)) {
+    const update = raw.defects?.[key];
+    defect.repair = choose(update, defect.repair, 0, 2);
+  }
+  FEE_RATE = ROUTES.resell.feeRate;
+  HANDLING = ROUTES.resell.fixed;
+  DONATE_TAX_RATE = ROUTES.donate.taxRate;
+  RATES_SOURCE = raw.version ? `${source} (${String(raw.version).slice(0, 40)})` : source;
+}
+
+// ---------- Evidence and price input ----------
+const clean = (v, max = 200) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+const cleanKey = (v) => clean(v, 60).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+const PRICE_TYPES = new Set(['new_street', 'current_market', 'renewed_market', 'unknown']);
+const EVIDENCE_FILLER = new Set(['the', 'and', 'with', 'model', 'edition', 'version', 'generation']);
+
+function words(value) {
+  return clean(value).toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+// Exact model claims need visible support. A logo can support a brand, but a model name must be
+// substantially present in observed text rather than inferred from an item's silhouette.
+function supportedByEvidence(value, observedText, required = 1) {
+  const evidence = new Set(words(observedText.join(' ')));
+  const terms = [...new Set(words(value).filter((word) => !EVIDENCE_FILLER.has(word)))];
+  if (!terms.length) return false;
+  return terms.filter((word) => evidence.has(word)).length / terms.length >= required;
+}
+
+function normalizeStreetPrice(raw) {
+  let low = validNumber(raw.priceLow) ? clamp(Number(raw.priceLow), 1, 20000) : null;
+  let high = validNumber(raw.priceHigh) ? clamp(Number(raw.priceHigh), 1, 20000) : null;
   if (low !== null && high !== null && low > high) [low, high] = [high, low];
-  let price = finite(r.priceTypical) ? Number(r.priceTypical)
+  let typical = validNumber(raw.priceTypical) ? Number(raw.priceTypical)
     : low !== null && high !== null ? (low + high) / 2
-    : finite(r.estimatedOriginalPrice) ? Number(r.estimatedOriginalPrice) : 30;
-  price = clampPrice(price);
-  if (low !== null) price = Math.max(price, low);
-  if (high !== null) price = Math.min(price, high);
-  return { price: Math.round(price * 100) / 100, low, high };
+    : validNumber(raw.estimatedOriginalPrice) ? Number(raw.estimatedOriginalPrice) : 30;
+  typical = clamp(typical, 1, 20000);
+  if (low !== null) typical = Math.max(typical, low);
+  if (high !== null) typical = Math.min(typical, high);
+  return { typical: round2(typical), low, high };
 }
 
-// Cleans one item coming from the AI model so bad output cannot break the math.
+function normalizeRepairability(raw, hasFunctionalFault) {
+  if (!hasFunctionalFault) return 1;
+  if (validNumber(raw.repairability)) return confidence(raw.repairability);
+  const value = String(raw.repairability || '').toLowerCase();
+  if (value === 'repairable') return 0.8;
+  if (value === 'not_repairable') return 0;
+  return 0.6; // unknown fault: retain recovery potential, but price its risk in.
+}
+
+// Validate Bedrock output at the trust boundary. Identity, condition and price confidence are separate
+// because a clear photo may prove condition without proving the exact model or current market price.
 export function normalizeItem(raw, imageCount = 1) {
   const r = raw && typeof raw === 'object' ? raw : {};
-  const conf = Number(r.confidence);
-  const p = streetPrice(r);
-  const idx = Array.isArray(r.imageIndexes)
+  const p = normalizeStreetPrice(r);
+  const observedText = Array.isArray(r.observedText)
+    ? r.observedText.map((x) => clean(x, 80)).filter((text) => text && !/^(no visible|no apparent|no defects?)/i.test(text)).slice(0, 6)
+    : [];
+  const productType = clean(r.productType, 80) || clean(r.name, 80) || 'Unidentified item';
+  const claimedBrand = clean(r.brand, 60);
+  const claimedModel = clean(r.model, 80);
+  const brandSupported = !claimedBrand || supportedByEvidence(claimedBrand, observedText, 1);
+  const modelSupported = !claimedModel || supportedByEvidence(claimedModel, observedText, 0.60);
+  let identityConfidence = confidence(r.identityConfidence ?? r.confidence);
+  if (claimedBrand && !brandSupported) identityConfidence = Math.min(identityConfidence, 0.55);
+  if (claimedModel && !modelSupported) identityConfidence = Math.min(identityConfidence, 0.55);
+  const brand = brandSupported ? claimedBrand || null : null;
+  const model = brandSupported && modelSupported ? claimedModel || null : null;
+  // Do not show an unproven exact model in the UI. Product type remains useful and honest.
+  const name = (claimedBrand !== brand || claimedModel !== model) && productType
+    ? clean(`${brand ? `${brand} ` : ''}${productType}`, 80)
+    : clean(r.name || `${brand ? `${brand} ` : ''}${productType}`, 80);
+  const conditionConfidence = confidence(r.conditionConfidence, identityConfidence);
+  const priceConfidence = Math.min(confidence(r.priceConfidence, identityConfidence), identityConfidence);
+  const condition = CONDITIONS[r.condition] ? r.condition : 'C';
+  const defects = Array.isArray(r.defects) ? [...new Set(r.defects.filter((d) => DEFECTS[d]))] : [];
+  const packagingStatus = ['included', 'missing', 'not_shown'].includes(r.packagingStatus)
+    ? r.packagingStatus : r.hasPackaging === true ? 'included' : 'not_shown';
+  const imageIndexes = Array.isArray(r.imageIndexes)
     ? [...new Set(r.imageIndexes.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < imageCount))]
     : [];
   return {
-    name: String(r.name || 'Unidentified item').slice(0, 80),
+    name,
+    productType,
+    brand,
+    model,
+    observedText,
     category: CATEGORIES[r.category] ? r.category : 'other',
-    estimatedOriginalPrice: p.price,
+    bundleKey: cleanKey(r.bundleKey ?? r.bundleGroup) || null,
+    estimatedOriginalPrice: p.typical, // kept for UI/backward compatibility; means reference price.
     priceLow: p.low,
     priceHigh: p.high,
-    priceBasis: String(r.priceBasis || '').slice(0, 200),
-    condition: CONDITIONS[r.condition] ? r.condition : 'C',
-    defects: Array.isArray(r.defects) ? [...new Set(r.defects.filter((d) => DEFECTS[d]))] : [],
-    hasPackaging: r.hasPackaging === true,
-    confidence: Number.isFinite(conf) ? Math.min(Math.max(conf, 0), 1) : 0.5,
-    notes: String(r.notes || '').slice(0, 200),
-    imageIndexes: idx.length ? idx : [0],
+    priceType: PRICE_TYPES.has(r.priceType) ? r.priceType : 'new_street',
+    priceBasis: clean(r.priceBasis),
+    identityConfidence,
+    conditionConfidence,
+    priceConfidence,
+    // `confidence` remains as an identity-confidence alias for old UI/data consumers.
+    confidence: identityConfidence,
+    condition,
+    defects,
+    repairability: normalizeRepairability(r, defects.includes('functional')),
+    packagingStatus,
+    hasPackaging: packagingStatus === 'included',
+    notes: clean(r.notes),
+    imageIndexes: imageIndexes.length ? imageIndexes : [0],
   };
 }
 
-// Uses the real retail price from the S3 catalog (matched by Lambda) instead of the AI's estimate.
+// A catalog value replaces an AI estimate only when the catalog matcher marks it verified.
+// Legacy objects without a status remain accepted for backwards-compatible callers/tests.
 export function applyCatalogMatch(item, match) {
-  const out = { ...item, aiEstimatedPrice: item.estimatedOriginalPrice, priceSource: 'ai', sku: null, catalogName: null };
-  const price = Number(match?.retailPrice);
-  if (match?.sku && Number.isFinite(price) && price > 0 && price <= 100000) {
+  const out = {
+    ...item,
+    aiEstimatedPrice: item.estimatedOriginalPrice,
+    priceSource: 'ai',
+    catalogMatchStatus: clean(match?.status ?? match?.matchStatus ?? 'unmatched', 24) || 'unmatched',
+    catalogMatchScore: validNumber(match?.score) ? Number(match.score) : null,
+    sku: null,
+    catalogName: null,
+  };
+  const price = Number(match?.referencePrice ?? match?.retailPrice);
+  const explicitStatus = match?.status ?? match?.matchStatus;
+  const verified = explicitStatus === undefined || explicitStatus === 'verified';
+  if (match?.sku && verified && Number.isFinite(price) && price > 0 && price <= 100000) {
     out.estimatedOriginalPrice = price;
     out.priceSource = 'catalog';
-    out.sku = String(match.sku).slice(0, 40);
-    out.catalogName = String(match.name || '').slice(0, 80);
+    out.sku = clean(match.sku, 40);
+    out.catalogName = clean(match.name, 80);
+    out.priceType = PRICE_TYPES.has(match.priceType) ? match.priceType : 'current_market';
+    out.priceBasis = clean(match.priceBasis || `Verified catalog match: ${out.catalogName}`);
+    out.priceCheckedAt = clean(match.priceCheckedAt, 20) || null;
+    out.catalogMatchStatus = 'verified';
   } else {
-    out.matchNote = String(match?.reason || 'No catalog match.').slice(0, 160);
+    out.matchNote = clean(match?.reason || 'No verified catalog match.', 180);
   }
   return out;
 }
 
-// Price used for decisions. Catalog prices are trusted. AI estimates are shaded toward the low end
-// of their own range as confidence drops, so an uncertain guess cannot push a risky route to the top.
+// Conservative reference price. The catalog is a verified business source. For AI values, blend
+// typical toward the low end using the weaker of identity and price confidence.
 export function valuationPrice(item) {
-  const p = item.estimatedOriginalPrice;
-  if (item.priceSource === 'catalog') return { price: p, haircut: 0 };
-  const c = Number.isFinite(item.confidence) ? item.confidence : 0.5;
-  const low = Number.isFinite(item.priceLow) && item.priceLow < p ? item.priceLow : p * 0.85;
-  const price = round2(p - (1 - c) * (p - low));
-  return { price, haircut: round2(p - price) };
+  const typical = item.estimatedOriginalPrice;
+  if (item.priceSource === 'catalog') return { price: typical, haircut: 0, confidence: 1 };
+  const evidence = Math.min(item.identityConfidence, item.priceConfidence);
+  const low = Number.isFinite(item.priceLow) && item.priceLow < typical ? item.priceLow : typical * 0.85;
+  const price = round2(low + (typical - low) * evidence);
+  return { price, haircut: round2(typical - price), confidence: evidence };
 }
 
-// ---------- Route economics ----------
-// Shared shape of every route result.
+// ---------- Conservative recovery calculation ----------
 const result = (viable, revenue, costs, note, revNote, costNote, extra = {}) => ({
-  viable, revenue: round2(revenue), costs: round2(costs), net: round2(revenue - costs), note, revNote, costNote, ...extra,
+  viable,
+  revenue: round2(revenue),
+  costs: round2(costs),
+  net: round2(revenue - costs),
+  note,
+  revNote,
+  costNote,
+  ...extra,
 });
 
-// Facts about one item that every route needs.
+function evidencePenalty(f) {
+  // Price uncertainty is already handled in valuationPrice. This modest penalty reflects the fact that an
+  // uncertain identity/condition lowers our confidence that the chosen channel will clear at its forecast price.
+  return 0.85 + 0.15 * Math.min(f.identityConfidence, f.conditionConfidence);
+}
+
+function defectSellability(defects) {
+  return defects.filter((d) => d !== 'functional').reduce((p, d) => p * DEFECTS[d].sellability, 1);
+}
+
 function itemFacts(item) {
-  const cat = CATEGORIES[item.category];
-  const { price, haircut } = valuationPrice(item);
-  const packaging = item.hasPackaging ? 1 : NO_PACKAGING_FACTOR;
-  const market = price * cat.retention;
-  const asIs = market * CONDITIONS[item.condition].factor * packaging;
-  const repairShare = item.defects.reduce((s, d) => s + DEFECTS[d].repair, 0);
+  const category = CATEGORIES[item.category];
+  const valuation = valuationPrice(item);
+  const packaging = item.packagingStatus === 'missing' ? NO_PACKAGING_FACTOR : 1;
+  // A current/renewed market price is already a market value. A new street price is converted to used market value.
+  const market = ['current_market', 'renewed_market'].includes(item.priceType)
+    ? valuation.price
+    : valuation.price * category.retention;
+  const repairShare = item.defects.reduce((sum, d) => sum + DEFECTS[d].repair, 0);
   return {
-    cat, price, haircut, packaging, market, asIs,
-    repairCost: price * repairShare,
+    item,
+    category,
+    valuation,
+    market,
+    asIs: market * CONDITIONS[item.condition].factor * packaging,
+    packaging,
+    repairCost: valuation.price * repairShare,
     working: !item.defects.includes('functional'),
-    salvage: price * cat.salvage,
+    repairability: item.repairability,
+    salvage: valuation.price * category.salvage,
+    identityConfidence: item.identityConfidence,
+    conditionConfidence: item.conditionConfidence,
+    priceConfidence: item.priceConfidence,
+    conditionSellability: CONDITIONS[item.condition].sellability,
+    defectSellability: defectSellability(item.defects),
   };
 }
 
-// Expected outcome of putting goods worth `value` on sale through a route.
-// Unsold goods fall back to recycling; waiting `days` costs value at the category's weekly depreciation.
-function sale(value, route, f, extraFixed = 0) {
-  const s = route.sellThrough;
-  const holding = value * f.cat.depreciation * (route.days / 7);
-  const revenue = s * value + (1 - s) * f.salvage;
-  const fees = s * value * route.feeRate;
-  const fallbackCost = (1 - s) * f.cat.disposal;
-  return { revenue, fees, holding, fallbackCost, costs: fees + holding + fallbackCost + extraFixed };
+// Expected sale result: chance of selling at route price + value recovered when an item fails to sell,
+// less marketplace fees, operational cost and value lost waiting for a buyer.
+function expectedSale(value, route, facts, { extraCost = 0, success = 1, restored = false } = {}) {
+  const grade = restored ? CONDITIONS.A.sellability : facts.conditionSellability;
+  const defects = restored ? 1 : facts.defectSellability;
+  const sellThrough = clamp(route.sellThrough * grade * defects * evidencePenalty(facts) * success, 0, 1);
+  const saleRevenue = sellThrough * value;
+  const fallbackRevenue = (1 - sellThrough) * facts.salvage;
+  const fees = saleRevenue * route.feeRate;
+  const waitLoss = value * facts.category.depreciation * (route.days / 7);
+  const fallbackCost = (1 - sellThrough) * facts.category.disposal;
+  return {
+    sellThrough,
+    revenue: saleRevenue + fallbackRevenue,
+    fees,
+    waitLoss,
+    fallbackCost,
+    costs: fees + waitLoss + fallbackCost + extraCost,
+  };
+}
+
+function routeReview(facts, best, runnerUp, results) {
+  const reasons = [];
+  if (facts.item.priceSource !== 'catalog' && facts.priceConfidence < 0.65) reasons.push('Price estimate has limited evidence.');
+  if (facts.identityConfidence < 0.65) reasons.push('Item identity is not certain.');
+  if (facts.conditionConfidence < 0.65) reasons.push('Condition is not certain.');
+  if (facts.item.catalogMatchStatus === 'review' || facts.item.catalogMatchStatus === 'ambiguous') reasons.push('Catalog match needs review.');
+  if (best === 'refurbish' && facts.repairability < 0.75) reasons.push('Repair outcome is uncertain.');
+  if (runnerUp) {
+    const gap = results[best].net - results[runnerUp].net;
+    const threshold = Math.max(1, Math.abs(results[best].net) * 0.05);
+    if (gap <= threshold) reasons.push('Top routes are nearly tied.');
+  }
+  return reasons;
 }
 
 export function evaluate(item) {
-  const f = itemFacts(item);
+  const facts = itemFacts(item);
   const R = ROUTES;
+  const asIsSale = expectedSale(facts.asIs, R.resell, facts, { extraCost: R.resell.fixed });
+  const refurbishedValue = facts.market * R.refurbish.valueFactor * facts.packaging;
+  const repairSuccess = facts.working ? 1 : facts.repairability;
+  const refurbishedSale = expectedSale(refurbishedValue, R.refurbish, facts, {
+    extraCost: R.refurbish.fixed + facts.repairCost,
+    success: repairSuccess,
+    restored: true,
+  });
+  const donateValue = facts.working ? facts.asIs * R.donate.taxRate : 0;
+  const detail = (sale, route) => `${pct(sale.sellThrough)} expected to sell. Fees ${usd(sale.fees)}, value lost over ${route.days} days ${usd(sale.waitLoss)}.`;
 
-  const resellSale = sale(f.asIs, R.resell, f, R.resell.fixed);
-  const refurbValue = f.market * R.refurbish.valueFactor * f.packaging;
-  const refurbSale = sale(refurbValue, R.refurbish, f, R.refurbish.fixed + f.repairCost);
-  const donateValue = f.asIs * R.donate.taxRate;
-
-  const saleNote = (x, route) => `${pctTxt(route.sellThrough)} expected to sell; the rest is recycled. Fees ${usd(x.fees)}, value lost over ${route.days} days ${usd(x.holding)}.`;
   const results = {
-    resell: f.working
-      ? result(true, resellSale.revenue, resellSale.costs, 'Sell as-is at a used price.',
-        `Used price ${usd(f.asIs)} × ${pctTxt(R.resell.sellThrough)} sell-through, plus recycling value for the rest.`,
-        `${saleNote(resellSale, R.resell)} Handling ${usd(R.resell.fixed)}.`)
-      : result(false, 0, 0, 'Cannot be sold as-is: it has a functional fault.', 'Not possible.', 'Not possible.'),
-    refurbish: result(true, refurbSale.revenue, refurbSale.costs,
-      f.repairCost > 0 ? 'Repair and clean, then sell as refurbished.' : 'Clean and certify, then sell as refurbished.',
-      `Refurbished price ${usd(refurbValue)} × ${pctTxt(R.refurbish.sellThrough)} sell-through, plus recycling value for the rest.`,
-      `Repair ${usd(f.repairCost)}. ${saleNote(refurbSale, R.refurbish)} Handling ${usd(R.refurbish.fixed)}.`),
-    bundle: result(false, 0, 0, 'Needs other low-value items in the same category to form a lot.',
-      'Sold together with other items as one lot.', 'One listing and one shipment shared by the lot.'),
-    donate: f.working
+    resell: facts.working
+      ? result(true, asIsSale.revenue, asIsSale.costs, 'Sell as-is at a used price.',
+        `Expected sale at ${usd(facts.asIs)} plus material recovery if it does not sell.`,
+        `${detail(asIsSale, R.resell)} Handling ${usd(R.resell.fixed)}.`)
+      : result(false, 0, 0, 'Cannot sell as-is: it has a functional fault.', 'Not possible.', 'Not possible.'),
+    refurbish: repairSuccess > 0
+      ? result(true, refurbishedSale.revenue, refurbishedSale.costs,
+        facts.repairCost > 0 ? 'Repair and clean, then sell as refurbished.' : 'Clean and certify, then sell as refurbished.',
+        `Expected sale at ${usd(refurbishedValue)} after repair, with a ${pct(repairSuccess)} repair-success assumption.`,
+        `Repair ${usd(facts.repairCost)}. ${detail(refurbishedSale, R.refurbish)} Bench work ${usd(R.refurbish.fixed)}.`)
+      : result(false, 0, 0, 'Do not refurbish: the fault is not repairable.', 'Not possible.', 'Not possible.'),
+    bundle: result(false, 0, 0, 'Needs compatible low-value items to form a profitable bundle.',
+      'Sold with compatible items as one lot.', 'One listing and shipment shared by the lot.'),
+    donate: facts.working
       ? result(true, donateValue, R.donate.fixed, 'Donate to charity for a tax benefit.',
-        `Tax benefit: fair value ${usd(f.asIs)} × ${pctTxt(R.donate.taxRate)}.`, `Shipping to the charity ${usd(R.donate.fixed)}.`)
+        `Tax benefit: fair value ${usd(facts.asIs)} × ${pct(R.donate.taxRate)}.`, `Shipping ${usd(R.donate.fixed)}.`)
       : result(false, 0, 0, 'Charities need working items.', 'Not possible.', 'Not possible.'),
-    scrap: result(true, f.salvage, f.cat.disposal, 'Recycle for material value.',
-      `Material value paid by the recycler (${pctTxt(f.cat.salvage)} of price).`, `Disposal fee for ${f.cat.label.toLowerCase()} ${usd(f.cat.disposal)}.`),
+    scrap: result(true, facts.salvage, facts.category.disposal, 'Recycle for material value.',
+      `Recycler material value (${pct(facts.category.salvage)} of reference price).`, `Disposal ${usd(facts.category.disposal)}.`),
   };
-  return rank({ results, facts: f });
+  return rank({ results, facts });
 }
 
-// Picks the route with the highest net recovery value and notes a greener near-equal option.
-function rank(ev) {
-  const { results } = ev;
-  const ranked = OPTIONS.filter((k) => results[k].viable).sort((a, b) => results[b].net - results[a].net || CIRCULAR_RANK[a] - CIRCULAR_RANK[b]);
+function rank(decision) {
+  const ranked = OPTIONS.filter((key) => decision.results[key].viable)
+    .sort((a, b) => decision.results[b].net - decision.results[a].net || CIRCULAR_RANK[a] - CIRCULAR_RANK[b]);
   const best = ranked[0];
-  const tol = Math.max(0.5, Math.abs(results[best].net) * 0.03);
-  const greenerKey = ranked.find((k) => CIRCULAR_RANK[k] < CIRCULAR_RANK[best] && results[best].net - results[k].net <= tol);
+  const runnerUp = ranked[1] || null;
+  const tolerance = Math.max(0.5, Math.abs(decision.results[best].net) * 0.03);
+  const greenerKey = ranked.find((key) => CIRCULAR_RANK[key] < CIRCULAR_RANK[best]
+    && decision.results[best].net - decision.results[key].net <= tolerance);
+  const reviewReasons = routeReview(decision.facts, best, runnerUp, decision.results);
   return {
-    ...ev,
+    ...decision,
     ranked,
     best,
-    runnerUp: ranked[1] || null,
-    greener: greenerKey ? { route: greenerKey, gap: round2(results[best].net - results[greenerKey].net) } : null,
-    savings: round2(results[best].net - results.scrap.net),
-    market: round2(ev.facts.market),
-    asIs: round2(ev.facts.asIs),
-    repairCost: round2(ev.facts.repairCost),
-    valuation: round2(ev.facts.price),
-    haircut: ev.facts.haircut,
+    runnerUp,
+    greener: greenerKey ? { route: greenerKey, gap: round2(decision.results[best].net - decision.results[greenerKey].net) } : null,
+    needsReview: reviewReasons.length > 0,
+    reviewReasons,
+    savings: round2(decision.results[best].net - decision.results.scrap.net),
+    market: round2(decision.facts.market),
+    asIs: round2(decision.facts.asIs),
+    repairCost: round2(decision.facts.repairCost),
+    valuation: round2(decision.facts.valuation.price),
+    haircut: decision.facts.valuation.haircut,
   };
 }
 
-// Decision for one item on its own (no bundling).
+// Independent decision for one item.
 export function decide(item) {
   return evaluate(item);
 }
 
-// ---------- Bundling (plan level) ----------
-// Net recovery value of selling a set of items as one lot.
+// ---------- Compatible bundles (plan level) ----------
+const individualNet = (item) => item.decision.results[item.decision.individualBest].net;
+const compatibleKey = (item) => item.bundleKey ? `${item.category}:${item.bundleKey}` : null;
+const isLowValue = (item) => item.decision.facts.working && Boolean(compatibleKey(item))
+  && ROUTES.resell.fixed >= ROUTES.bundle.lowValueCostShare * item.decision.facts.asIs;
+
 function lotEconomics(members) {
   const R = ROUTES.bundle;
-  let value = 0; let revenue = 0; let fees = 0; let holding = 0; let fallback = 0;
-  for (const m of members) {
-    const f = m.decision.facts;
-    const v = f.asIs * R.lotFactor;
-    const x = sale(v, R, f);
-    value += v; revenue += x.revenue; fees += x.fees; holding += x.holding; fallback += x.fallbackCost;
+  let revenue = 0;
+  let fees = 0;
+  let waitLoss = 0;
+  let fallbackCost = 0;
+  for (const member of members) {
+    const facts = member.decision.facts;
+    const value = facts.asIs * R.lotFactor;
+    const sale = expectedSale(value, R, facts, { extraCost: 0 });
+    revenue += sale.revenue;
+    fees += sale.fees;
+    waitLoss += sale.waitLoss;
+    fallbackCost += sale.fallbackCost;
   }
-  const fixed = R.fixedPerLot + R.perItem * members.length;
-  const costs = fees + holding + fallback + fixed;
-  return { value, revenue, costs, net: revenue - costs, fees, holding, fixed };
+  const sharedCost = R.fixedPerLot + R.perItem * members.length;
+  const costs = fees + waitLoss + fallbackCost + sharedCost;
+  return { revenue, costs, net: revenue - costs, fees, waitLoss, sharedCost };
 }
 
-const individualNet = (it) => it.decision.results[it.decision.individualBest].net;
-
-// Finds the most valuable lot among bundle candidates: start from the lowest-value items, then remove any
-// member that earns less in the lot than on its own route. Accept only if the lot beats selling separately.
-function bestLot(cands) {
-  const R = ROUTES.bundle;
-  let lot = [...cands].sort((a, b) => individualNet(a) - individualNet(b)).slice(0, R.maxItems);
-  for (;;) {
-    if (lot.length < R.minItems) return null;
-    const total = lotEconomics(lot).net;
-    let worst = null; let worstMargin = 0;
-    for (const m of lot) {
-      const without = lot.filter((x) => x !== m);
-      const withoutNet = without.length >= R.minItems ? lotEconomics(without).net : without.reduce((s, x) => s + individualNet(x), 0);
-      const margin = total - withoutNet - individualNet(m); // what m adds to the lot beyond its own best route
-      if (margin < worstMargin) { worst = m; worstMargin = margin; }
+// Choose the best compatible subset, not a broad category-level lot. There are at most 12 candidates,
+// so enumerating subsets is small, transparent and avoids a brittle greedy choice.
+function bestLot(candidates) {
+  const max = Math.min(candidates.length, ROUTES.bundle.maxItems);
+  const pool = [...candidates].sort((a, b) => individualNet(a) - individualNet(b)).slice(0, max);
+  let best = null;
+  const totalMasks = 2 ** pool.length;
+  for (let mask = 0; mask < totalMasks; mask += 1) {
+    const size = mask.toString(2).replaceAll('0', '').length;
+    if (size < ROUTES.bundle.minItems) continue;
+    const members = pool.filter((_, index) => mask & (1 << index));
+    const economics = lotEconomics(members);
+    const separate = members.reduce((sum, member) => sum + individualNet(member), 0);
+    const uplift = economics.net - separate;
+    if (uplift > 0.5 && (!best || uplift > best.uplift || (uplift === best.uplift && members.length > best.members.length))) {
+      best = { members, economics, uplift };
     }
-    if (!worst) break;
-    lot = lot.filter((x) => x !== worst);
   }
-  const eco = lotEconomics(lot);
-  const alone = lot.reduce((s, x) => s + individualNet(x), 0);
-  return eco.net - alone > 0.5 ? { lot, eco, surplus: eco.net - alone } : null;
+  return best;
 }
 
-// Result of the bundle route for member m of a lot: its own best route plus a value-weighted share of the
-// lot's surplus, so in the planned lot every member earns more than it would alone.
-function shareResult(m, members, eco, lotId) {
-  const wSum = members.reduce((s, x) => s + x.decision.facts.asIs, 0) || 1;
-  const w = m.decision.facts.asIs / wSum;
-  const surplus = eco.net - members.reduce((s, x) => s + individualNet(x), 0);
-  const net = individualNet(m) + surplus * w;
-  const revenue = eco.revenue * w;
+function bundleResult(member, members, economics, id, key) {
+  const totalValue = members.reduce((sum, m) => sum + m.decision.facts.asIs, 0) || 1;
+  const weight = member.decision.facts.asIs / totalValue;
+  const surplus = economics.net - members.reduce((sum, m) => sum + individualNet(m), 0);
+  const net = individualNet(member) + surplus * weight;
+  const revenue = economics.revenue * weight;
   return result(true, revenue, revenue - net,
-    `Sell in lot ${lotId} with ${members.length - 1} other ${CATEGORIES[m.category].label.toLowerCase()} item(s): one listing, one shipment.`,
-    `Its share of the lot's sale: ${pctTxt(ROUTES.bundle.lotFactor)} of used value, ${pctTxt(ROUTES.bundle.sellThrough)} sell-through.`,
-    `Its share of the lot's fees, value lost and shared fixed cost (${usd(eco.fixed)} for the whole lot).`,
-    { lot: { id: lotId, size: members.length, items: members.map((x) => x.name) } });
+    `Sell in bundle ${id} with ${members.length - 1} compatible item(s): one listing, one shipment.`,
+    `Its share of a ${members.length}-item ${key.replaceAll('-', ' ')} bundle.`,
+    `Its share of marketplace fees, value lost while waiting and ${usd(economics.sharedCost)} shared handling.`,
+    { lot: { id, size: members.length, key, items: members.map((m) => m.name), uplift: round2(surplus) } });
 }
 
-function priceLot(members, lotId, targets = members) {
-  const eco = lotEconomics(members);
-  for (const m of targets) m.decision.results.bundle = shareResult(m, members, eco, lotId);
+function priceLot(members, id, key, targets = members) {
+  const economics = lotEconomics(members);
+  for (const member of targets) member.decision.results.bundle = bundleResult(member, members, economics, id, key);
 }
 
-// Low value = a single listing's handling would eat a large share of what the item sells for. Defined by the cost
-// profile, not a fixed dollar amount, so it adapts when a store changes its rates.
-const isLowValue = (it) => it.decision.facts.working
-  && ROUTES.resell.fixed >= ROUTES.bundle.lowValueCostShare * it.decision.facts.asIs;
-
-// Full plan for all items: individual decisions, then bundling of low-value items per category.
+// Individual routes first; then one best positive bundle per compatible group.
 export function planDecisions(items, { lotIds = 'ABCDEFGHIJ' } = {}) {
-  const out = items.map((it) => {
-    const d = decide(it);
-    return { ...it, decision: { ...d, individualBest: d.best, lotHome: null } };
+  const planned = items.map((item) => {
+    const decision = decide(item);
+    return { ...item, decision: { ...decision, individualBest: decision.best, lotHome: null } };
   });
-  let next = 0;
-  for (const cat of Object.keys(CATEGORIES)) {
-    const cands = out.filter((it) => it.category === cat && isLowValue(it));
-    const found = bestLot(cands);
-    if (!found) continue;
-    const id = lotIds[next] || String(next + 1);
-    next += 1;
-    for (const m of found.lot) m.decision.lotHome = id;
-    priceLot(found.lot, id);
+  const groups = new Map();
+  for (const item of planned) {
+    if (!isLowValue(item)) continue;
+    const key = compatibleKey(item);
+    (groups.get(key) || groups.set(key, []).get(key)).push(item);
   }
-  for (const it of out) Object.assign(it.decision, rank(it.decision));
-  return out;
+  let n = 0;
+  for (const [key, candidates] of groups) {
+    const chosen = bestLot(candidates);
+    if (!chosen) continue;
+    const id = lotIds[n] || String(n + 1);
+    n += 1;
+    for (const member of chosen.members) member.decision.lotHome = id;
+    priceLot(chosen.members, id, key);
+  }
+  for (const item of planned) Object.assign(item.decision, rank(item.decision));
+  return planned;
 }
 
-// Re-prices lots after a manager changes a route (changed = index of the item that changed).
-// - Items set to Bundle form the lot; the others see what joining it would bring.
-// - Choosing Bundle for a member of a lot that fell apart brings the whole lot back.
-// - If fewer than the minimum stay, the lot is dissolved and the rest go back to their own best route.
-export function replan(items, chosen, changed = -1) {
+// Reprice the remaining compatible members after a manager takes an item out of a bundle. If fewer than two
+// compatible items remain, their selections return to their individual recommendation instead of silently re-forming a lot.
+export function replan(items, chosen) {
   const next = [...chosen];
-  const homes = {};
-  items.forEach((it, i) => { if (it.decision.lotHome) (homes[it.decision.lotHome] ||= []).push(i); });
-  for (const [id, idx] of Object.entries(homes)) {
-    let stay = idx.filter((i) => next[i] === 'bundle');
-    if (idx.includes(changed) && next[changed] === 'bundle' && stay.length < ROUTES.bundle.minItems) {
-      for (const i of idx) next[i] = 'bundle';
-      stay = idx;
+  const homes = new Map();
+  items.forEach((item, index) => {
+    if (!item.decision.lotHome) return;
+    (homes.get(item.decision.lotHome) || homes.set(item.decision.lotHome, []).get(item.decision.lotHome)).push(index);
+  });
+  for (const [id, indexes] of homes) {
+    const selected = indexes.filter((index) => next[index] === 'bundle');
+    const key = compatibleKey(items[indexes[0]]) || 'compatible-items';
+    if (selected.length < ROUTES.bundle.minItems) {
+      for (const index of selected) next[index] = items[index].decision.individualBest;
+      continue;
     }
-    if (stay.length >= ROUTES.bundle.minItems) {
-      const members = stay.map((i) => items[i]);
-      priceLot(members, id);
-      for (const i of idx.filter((x) => !stay.includes(x))) {
-        priceLot([...members, items[i]], id, [items[i]]); // what rejoining would bring
-      }
-    } else {
-      for (const i of stay) next[i] = items[i].decision.individualBest;
-      const all = idx.map((i) => items[i]);
-      priceLot(all, id); // value of re-forming the full lot
-      for (const m of all) m.decision.results.bundle.note = `Re-forms lot ${id} with ${all.length - 1} other item(s).`;
+    const members = selected.map((index) => items[index]);
+    const economics = lotEconomics(members);
+    const separate = members.reduce((sum, item) => sum + individualNet(item), 0);
+    if (economics.net - separate <= 0.5) {
+      for (const index of selected) next[index] = items[index].decision.individualBest;
+      continue;
     }
-    for (const i of idx) Object.assign(items[i].decision, rank(items[i].decision));
+    priceLot(members, id, key);
+    for (const index of indexes) Object.assign(items[index].decision, rank(items[index].decision));
   }
   return { items, chosen: next };
 }
 
-// ---------- Explanations and totals ----------
-// Plain-language reason built from the numbers. Used as a fallback when the AI's own explanation fails.
-export function buildReason(item, d) {
-  const best = d.best;
-  const r = d.results[best];
-  const bits = [];
-  const defectText = item.defects.length ? ` with ${item.defects.map((x) => DEFECTS[x].label.toLowerCase()).join(', ')}` : '';
-  bits.push(`${item.name} looks like grade ${item.condition}${defectText}.`);
-  if (!d.results.resell.viable) bits.push('It has a functional fault, so it cannot be sold or donated as-is.');
-  if (best === 'bundle') bits.push(`Selling it in lot ${r.lot.id} with ${r.lot.size - 1} other item(s) spreads one listing and shipment across the lot.`);
-  let line = `${OPTION_LABEL[best]} brings back the most at ${usd(r.net)} net`;
-  if (d.runnerUp) line += `, ahead of ${OPTION_LABEL[d.runnerUp].toLowerCase()} at ${usd(d.results[d.runnerUp].net)}`;
-  bits.push(`${line}.`);
-  bits.push(best === 'scrap'
-    ? 'Recycling is already the best return here.'
-    : `That is ${usd(d.savings)} more than scrapping it (${usd(d.results.scrap.net)}).`);
-  if (d.greener) bits.push(`${OPTION_LABEL[d.greener.route]} is a greener option for only ${usd(d.greener.gap)} less.`);
-  return bits.join(' ');
+// ---------- Explanation and totals ----------
+export function buildReason(item, decision) {
+  const best = decision.best;
+  const route = decision.results[best];
+  const parts = [];
+  parts.push(`${item.name} is grade ${item.condition}${item.defects.length ? ` with ${item.defects.map((d) => DEFECTS[d].label.toLowerCase()).join(', ')}` : ''}.`);
+  if (best === 'bundle') parts.push(`Bundle ${route.lot.id} shares one listing and shipment across ${route.lot.size} compatible items.`);
+  if (!decision.results.resell.viable) parts.push('It cannot be sold or donated as-is because of its functional fault.');
+  parts.push(`${OPTION_LABEL[best]} has the highest conservative recovery at ${usd(route.net)}.`);
+  if (best !== 'scrap') parts.push(`That is ${usd(decision.savings)} more than scrapping it.`);
+  if (decision.needsReview) parts.push(`Check: ${decision.reviewReasons[0]}`);
+  return parts.join(' ');
 }
 
-// Totals across items. chosen[i] is the route picked for item i (defaults to the recommendation).
 export function summarize(items, chosen = []) {
-  let net = 0; let saved = 0; let diverted = 0;
-  items.forEach((it, i) => {
-    const key = chosen[i] && it.decision.results[chosen[i]]?.viable ? chosen[i] : it.decision.best;
-    net += it.decision.results[key].net;
-    saved += it.decision.results[key].net - it.decision.results.scrap.net;
+  let net = 0;
+  let saved = 0;
+  let diverted = 0;
+  items.forEach((item, index) => {
+    const key = chosen[index] && item.decision.results[chosen[index]]?.viable ? chosen[index] : item.decision.best;
+    net += item.decision.results[key].net;
+    saved += item.decision.results[key].net - item.decision.results.scrap.net;
     if (key !== 'scrap') diverted += 1;
   });
   return { net: round2(net), saved: round2(saved), diverted };

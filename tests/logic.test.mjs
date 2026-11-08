@@ -6,7 +6,7 @@ import {
 } from '../logic.js';
 
 const item = (o) => applyCatalogMatch(normalizeItem({
-  name: 'Item', category: 'apparel', priceTypical: 20, priceLow: 15, priceHigh: 25,
+  name: 'Item', category: 'apparel', bundleKey: 'test-shirt', priceTypical: 20, priceLow: 15, priceHigh: 25,
   condition: 'B', defects: [], hasPackaging: false, confidence: 0.9, ...o,
 }), null);
 
@@ -72,7 +72,7 @@ test('a broken item is never put into a lot', () => {
   assert.equal(plan[0].decision.lotHome, null);
 });
 
-test('replan: leaving a lot re-prices it; dropping below the minimum dissolves it; choosing Bundle re-forms it', () => {
+test('replan: leaving a lot re-prices it and a one-item lot safely returns to its own route', () => {
   const plan = planDecisions([1, 2].map(() => item({})).concat([1, 2].map(() => item({}))));
   let chosen = plan.map((it) => it.decision.best);
   assert.deepEqual(chosen, ['bundle', 'bundle', 'bundle', 'bundle']);
@@ -86,9 +86,10 @@ test('replan: leaving a lot re-prices it; dropping below the minimum dissolves i
   ({ chosen } = replan(plan, chosen, 2));
   assert.equal(chosen[3], plan[3].decision.individualBest, 'last member goes back to its own route');
 
+  // A single item cannot silently re-form a bundle by overriding every other manager choice.
   chosen[0] = 'bundle';
   ({ chosen } = replan(plan, chosen, 0));
-  assert.deepEqual(chosen, ['bundle', 'bundle', 'bundle', 'bundle'], 'lot re-formed');
+  assert.equal(chosen[0], plan[0].decision.individualBest, 'one item returns to its own route');
 });
 
 test('a greener near-equal route is pointed out without changing the recommendation', () => {

@@ -7,6 +7,10 @@ Parameters:
     Type: String
     Default: us.anthropic.claude-opus-4-8
     Description: Bedrock model or inference profile ID with image input (Converse API).
+  CatalogFunctionName:
+    Type: String
+    Default: reconomy-catalog
+    Description: Name of the catalog-matching Lambda created by scripts/setup_aws.py.
   AllowedOrigin:
     Type: String
     Default: '*'
@@ -62,11 +66,15 @@ Resources:
           BUCKET: !Ref ImagesBucket
           TABLE: !Ref DecisionsTable
           MODEL_ID: !Ref ModelId
+          CATALOG_FUNCTION: !Ref CatalogFunctionName
           ALLOWED_ORIGIN: !Ref AllowedOrigin
       Policies:
         - S3WritePolicy: { BucketName: !Ref ImagesBucket }
         - DynamoDBCrudPolicy: { TableName: !Ref DecisionsTable }
         - Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogFunctionName}
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource:

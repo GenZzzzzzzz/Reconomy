@@ -111,7 +111,7 @@ def function(role_arn, fresh_role):
 def smoke():
     for attempt in range(8):  # new IAM permissions can take ~10-20 s to apply (shows up as S3 403)
         out = lam.invoke(FunctionName=FUNCTION, Payload=json.dumps(
-            {"items": [{"name": "Nike Free RN Flyknit", "category": "apparel"}]}).encode())
+            {"items": [{"name": "Nike Free RN Flyknit", "brand": "Nike", "model": "Free RN Flyknit", "observedText": ["NIKE", "FREE", "RN", "FLYKNIT"], "category": "apparel", "identityConfidence": 0.95}]}).encode())
         body = json.loads(out["Payload"].read())
         if not out.get("FunctionError"):
             break
@@ -119,7 +119,10 @@ def smoke():
             sys.exit(f"Lambda test FAILED: {body}")
         print("test     waiting for IAM permissions to apply...")
         time.sleep(5)
-    print(f"test     catalog={body['catalogSize']} products, match={body['matches'][0]}")
+    match = body["matches"][0]
+    if match.get("status") != "verified":
+        sys.exit(f"Lambda test FAILED: expected a verified catalog match, got {match}")
+    print(f"test     catalog={body['catalogSize']} products, verified match={match}")
 
 
 if __name__ == "__main__":

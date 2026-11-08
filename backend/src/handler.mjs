@@ -4,18 +4,21 @@
 import { randomUUID } from 'node:crypto';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
-  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, normalizeItem, applyCatalogMatch, planDecisions, buildReason,
+  CATEGORIES, CONDITIONS, DEFECTS, OPTIONS, normalizeItem, applyCatalogMatch, applyRates, resetRates, planDecisions, buildReason,
 } from './decision.mjs';
 
-const { BUCKET, TABLE, MODEL_ID, ALLOWED_ORIGIN = '*' } = process.env;
+const { BUCKET, TABLE, MODEL_ID, CATALOG_FUNCTION, ALLOWED_ORIGIN = '*' } = process.env;
 const MAX_IMAGES = 8;
+const MAX_ITEMS = 20; // a photo can contain more than one distinct product
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024;
 
 const bedrock = new BedrockRuntimeClient({});
 const s3 = new S3Client({});
+const lambda = new LambdaClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 
 const reply = (status, body) => ({
@@ -65,7 +68,12 @@ async function analyzeRoute(body) {
   }))));
 
   const rawItems = await identifyItems(buffers);
-  const items = planDecisions(rawItems.map((r) => applyCatalogMatch(normalizeItem(r, buffers.length), null)));
+  const catalog = await catalogLookup(rawItems);
+  if (catalog?.ok) applyRates(catalog.rates);
+  else resetRates();
+  const items = planDecisions(rawItems.map((r, i) => applyCatalogMatch(
+    normalizeItem(r, buffers.length), catalog?.ok ? catalog.matches[i] : null,
+  )));
 
   const reasons = await explain(items).catch((e) => { console.error('explain failed', e); return null; });
   items.forEach((it, i) => {
@@ -79,49 +87,87 @@ async function analyzeRoute(body) {
     Item: {
       id, createdAt: new Date().toISOString(), status: 'analyzed', modelId: MODEL_ID, imageKeys: keys,
       items: items.map((it) => ({
-        name: it.name, category: it.category, estimatedOriginalPrice: it.estimatedOriginalPrice,
-        condition: it.condition, defects: it.defects, hasPackaging: it.hasPackaging, confidence: it.confidence,
+        name: it.name, brand: it.brand, model: it.model, observedText: it.observedText,
+        category: it.category, estimatedOriginalPrice: it.estimatedOriginalPrice,
+        priceLow: it.priceLow, priceHigh: it.priceHigh, priceType: it.priceType,
+        identityConfidence: it.identityConfidence, conditionConfidence: it.conditionConfidence, priceConfidence: it.priceConfidence,
+        condition: it.condition, defects: it.defects, repairability: it.repairability, packagingStatus: it.packagingStatus, hasPackaging: it.hasPackaging,
         imageIndexes: it.imageIndexes, recommended: it.decision.best, savings: it.decision.savings,
         netByOption: Object.fromEntries(OPTIONS.map((k) => [k, it.decision.results[k].net])), reason: it.reason,
       })),
     },
   }));
 
-  return { id, items };
+  return { id, items, catalog };
 }
 
-const VISION_PROMPT = `You are a careful returns inspector for a retail store. The photos above show returned products.
+async function catalogLookup(rawItems) {
+  if (!CATALOG_FUNCTION) return { ok: false, error: 'No catalog function configured.' };
+  try {
+    const payload = rawItems.map((item) => ({
+      name: item.name || '', brand: item.brand || null, model: item.model || null,
+      category: item.category || 'other', identityConfidence: item.identityConfidence ?? item.confidence ?? 0.5,
+      observedText: Array.isArray(item.observedText) ? item.observedText : [],
+    }));
+    const out = await lambda.send(new InvokeCommand({
+      FunctionName: CATALOG_FUNCTION,
+      Payload: Buffer.from(JSON.stringify({ items: payload })),
+    }));
+    if (out.FunctionError) throw new Error(Buffer.from(out.Payload || []).toString());
+    const body = JSON.parse(Buffer.from(out.Payload || []).toString() || '{}');
+    if (body.error || !Array.isArray(body.matches) || body.matches.length !== rawItems.length) throw new Error(body.error || 'Invalid catalog response.');
+    return { ok: true, function: CATALOG_FUNCTION, ...body };
+  } catch (error) {
+    console.error('catalog lookup failed', error);
+    return { ok: false, function: CATALOG_FUNCTION, error: 'Catalog lookup unavailable; using conservative AI market estimates.' };
+  }
+}
+
+const VISION_PROMPT = `You are a conservative returns inspector for a retail store. The photos above show returned products.
+Your job is to report only what the photos support. Accuracy matters more than a detailed guess.
+
 Rules:
-- List EVERY separate sellable product. If one photo shows several products (e.g. a phone and earbuds),
-  return one object per product, each with that photo's index.
-- Only group photos into one item when they clearly show the SAME physical product from different angles.
-- Be specific: brand, model and colour when you can see or reliably recognise them. Do not guess a model you cannot tell.
-- Grade only what is visible. A clean product with no visible wear is condition A.
-  Add a defect only if you can actually see it in the photo; if unsure, leave defects empty.
-- Price like a market analyst, not a sticker. The price is what a US shopper actually paid for this item
-  new in the last 12 months at mainstream retailers (Amazon, Walmart, Target, Best Buy, the brand store),
-  including the usual discounts. Never use the launch price or original MSRP of an older model.
-- If the model is no longer sold new, price it at what it sells for today at mainstream retailers
-  (clearance, outlet or certified renewed), not what it cost when it launched.
-- Price a specific model only when brand and model are visible or certain. Otherwise price the generic
-  product type at a mid-market retailer, and do not assume a premium brand.
-- When unsure, pick the lower plausible figure: an overestimate inflates every recovery decision.
+- List EVERY separate sellable product. If a photo has several products, return one object for each and use the same photo index.
+- Group photos only when they clearly show the SAME physical item from different angles.
+- Copy brand names, model numbers, labels and packaging text only when you can see them. Put that text in observedText.
+  observedText must contain literal visible text or logos only, never a condition statement such as "no visible defects".
+- Only give a brand or model when visible text or an unmistakable logo supports it. Do not infer a specific model from colour or shape.
+  If the exact model is unclear, name the generic product type, set brand and model to null, and lower identityConfidence.
+- Grade only visible condition. Do not call normal shadows, reflections or studio backgrounds damage.
+  List a defect only when it is visible. If the photo cannot prove condition, use C and lower conditionConfidence.
+- priceLow, priceTypical and priceHigh estimate the CURRENT US market price, not launch MSRP. Use current mainstream street price for a new item,
+  or current renewed/open-box market price for discontinued items. If identity is unclear, use a broad generic-product range and lower priceConfidence.
+- Never name a model from a visual silhouette alone. A specific generation or model must be present in observedText; otherwise use productType only and lower identityConfidence.
+- Do not manufacture a premium brand, packaging, a working condition, or a precise price.
+- Set bundleKey only when this item can sensibly be sold with OTHER matching items as one consumer-facing lot (examples: identical shirts,
+  USB-C cables, phone cases). Use a short normalized type such as "usb-c-cable". Otherwise return null; never use a broad category like "apparel".
+- Set repairability only for a functional fault: "repairable", "unknown", or "not_repairable". Use "unknown" when a photo cannot establish repair success.
+
 Return ONLY a JSON array, no prose, no markdown. One object per product:
 {
- "name": short product name (e.g. "Sony WH-1000XM4 headphones"),
+ "name": concise evidence-supported name; generic type when exact identity is unclear,
+ "productType": short generic product type visible in the image (for example "running shoe" or "over-ear headphones"),
+ "brand": visible brand string or null,
+ "model": visible model string or null,
+ "observedText": array of text or labels visibly read from the photos,
  "category": one of ${JSON.stringify(Object.keys(CATEGORIES))},
- "priceLow": lowest common street price in USD (number),
- "priceTypical": most common street price in USD (number, between priceLow and priceHigh),
- "priceHigh": highest common street price in USD (number),
- "priceBasis": one short sentence on what the price is based on (model year, discontinued or not, where it sells),
+ "bundleKey": compatible product type string or null,
+ "priceType": one of ["new_street", "current_market", "renewed_market", "unknown"],
+ "priceLow": low current market price in USD (number),
+ "priceTypical": typical current market price in USD (number, between priceLow and priceHigh),
+ "priceHigh": high current market price in USD (number),
+ "priceBasis": one short sentence explaining the price type and evidence,
+ "identityConfidence": confidence in the exact identity, 0 to 1,
+ "conditionConfidence": confidence in the condition grade, 0 to 1,
+ "priceConfidence": confidence in the price range, 0 to 1,
  "condition": one of ${JSON.stringify(Object.keys(CONDITIONS))} (A like new, B good, C fair, D poor),
- "defects": array using only ${JSON.stringify(Object.keys(DEFECTS))} (use "functional" only for visible breakage that stops it working),
- "hasPackaging": true if original packaging is visible,
- "confidence": 0 to 1,
- "notes": one short sentence on what you observed,
- "imageIndexes": zero-based indexes of the photos showing this product
+ "defects": array using only ${JSON.stringify(Object.keys(DEFECTS))},
+ "repairability": "repairable", "unknown", "not_repairable", or null,
+ "packagingStatus": one of ["included", "not_shown", "missing"]. Use "included" only if original packaging is visible; use "not_shown" unless the photo clearly proves it is missing,
+ "notes": one short factual sentence about visible evidence,
+ "imageIndexes": zero-based indexes of photos showing this product
 }
-If a photo shows no product, leave it out.`;
+If a photo shows no product, leave it out. If nothing is a product, return [].`;
 
 async function identifyItems(buffers) {
   const content = [];
@@ -133,19 +179,23 @@ async function identifyItems(buffers) {
   const text = await converse(content, 4000);
   const parsed = parseJson(text);
   if (!Array.isArray(parsed)) throw new Error(`Model did not return a JSON array: ${text.slice(0, 200)}`);
-  return parsed.slice(0, MAX_IMAGES);
+  return parsed.slice(0, MAX_ITEMS);
 }
 
 async function explain(items) {
   const facts = items.map((it, i) => ({
-    index: i, name: it.name, condition: it.condition, defects: it.defects,
+    index: i, name: it.name, category: it.category, condition: it.condition, defects: it.defects,
+    priceSource: it.priceSource === 'catalog' ? `verified store catalog (${it.sku})` : 'conservative AI market estimate',
+    referencePrice: it.estimatedOriginalPrice, priceType: it.priceType,
+    identityConfidence: it.identityConfidence, conditionConfidence: it.conditionConfidence, priceConfidence: it.priceConfidence,
+    assessmentNeedsReview: it.decision.needsReview, reviewReasons: it.decision.reviewReasons,
     recommended: it.decision.best, savedVersusScrap: it.decision.savings,
     netRecoveryValueByOption: Object.fromEntries(it.decision.ranked.map((k) => [k, it.decision.results[k].net])),
     notViable: OPTIONS.filter((k) => !it.decision.results[k].viable),
-    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size } : null,
+    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size, key: it.decision.results.bundle.lot.key } : null,
     greenerOption: it.decision.greener ? { route: it.decision.greener.route, costsLess: it.decision.greener.gap } : null,
   }));
-  const prompt = `For each returned item below, write 2 short sentences for a store manager explaining why the recommended route brings back the most money (net recovery value). If it is a bundle, say it is sold as a lot with other items. If a greener option is given, mention it in a few words.
+  const prompt = `For each returned item below, write 2 short sentences for a store manager explaining why the recommended route brings back the most money (net recovery value). If it is a bundle, say it is sold as a lot with other items. If a greener option is given, mention it in a few words. If assessmentNeedsReview is true, say the plan should be checked before routing.
 Use the exact dollar figures given. Mention the money saved versus scrapping. Do not invent numbers.
 Return ONLY a JSON array of strings, in the same order.
 ${JSON.stringify(facts)}`;
@@ -175,7 +225,7 @@ function parseJson(text) {
 async function approveRoute(body) {
   const { id, choices } = body;
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new BadRequest('Invalid id.');
-  if (!Array.isArray(choices) || choices.length > MAX_IMAGES || !choices.every((c) => OPTIONS.includes(c))) {
+  if (!Array.isArray(choices) || choices.length > MAX_ITEMS || !choices.every((c) => OPTIONS.includes(c))) {
     throw new BadRequest('Invalid choices.');
   }
   try {

@@ -66,8 +66,9 @@ different products. Note: Opus 4.8 rejects the `temperature` parameter, so the a
 Photos: JPG, PNG, WEBP and HEIC (iPhone). Chrome cannot decode HEIC, so the server converts it to JPEG
 (`/api/convert`, Pillow + pillow-heif). The server log prints how many images each analysis sent and what came back.
 
-Flow: Bedrock inspects the photos (product, category, price, condition, defects) → `logic.js` computes the
-profit of each route and picks the max → Bedrock writes the explanation from those exact numbers.
+Flow: Bedrock extracts visible evidence (product, labels, condition, defects and price range) → S3 catalog matching
+verifies high-confidence identities → `logic.js` calculates conservative recovery for every route → Bedrock writes
+the explanation using those exact results.
 
 Do not serve this folder with `python3 -m http.server`. It would expose `.env`.
 Without a reachable AI server the app shows **AI offline**, explains how to start it, and produces no results
@@ -75,8 +76,9 @@ Without a reachable AI server the app shows **AI offline**, explains how to star
 
 ## Deploy the real backend
 
-Needs the AWS CLI and AWS SAM CLI, plus model access for Amazon Nova Lite (or another image-capable model) in the
-Bedrock console.
+Needs the AWS CLI and AWS SAM CLI, plus Bedrock model access for the image model (default Claude Opus 4.8).
+Run `.venv/bin/python scripts/setup_aws.py` first so the `reconomy-catalog` Lambda exists. Without it the API still
+works, but uses conservative AI market estimates instead of catalog prices.
 
 ```
 ./scripts/sync-logic.sh
@@ -94,25 +96,28 @@ export const API_BASE = 'https://xxxx.execute-api.us-east-1.amazonaws.com';
 The badge in the header switches to "Live · AWS". To use a different model, pass
 `--parameter-overrides ModelId=<model or inference profile id>`. For production, set `AllowedOrigin` to your site's URL.
 
-## How the original price is set
+## Evidence and reference price
 
-1. **Catalog price** (most objective): if AWS Lambda matches the item to `data/catalog.csv` in S3, that price
-   is used. Model numbers and generations must match exactly ("AirPods Pro 1st gen" never takes the 2nd-gen price).
-2. **AI street price** otherwise: Bedrock returns `priceLow` / `priceTypical` / `priceHigh` and a `priceBasis`.
-   It prices what a US shopper actually pays today at mainstream retailers, never the launch MSRP; discontinued
-   models are priced at today's clearance or renewed price; unclear brands are priced as the generic product; when
-   unsure it picks the lower figure. The app uses the typical price, kept inside the range (`streetPrice` in `logic.js`).
+1. **Verified catalog reference:** AWS Lambda uses the name, visible brand/model text and identity confidence to
+   match `data/catalog.csv` in S3. A catalog reference replaces the AI range only for a high-confidence,
+   unambiguous match. Generic descriptions, wrong model generations and ambiguous items stay estimates.
+2. **Conservative AI market estimate:** Bedrock returns `priceLow`, `priceTypical`, `priceHigh`, `priceType`,
+   `priceBasis`, and separate identity / condition / price confidence. The decision blends the typical price toward
+   the low end using the weaker identity or price confidence. The UI shows the range, the cautious decision value,
+   visible evidence and any review flag.
+3. **Correct price basis:** `new_street` prices are converted to a used-market value. `current_market` and
+   `renewed_market` catalog references already represent the downstream market, so they are not discounted twice.
 
-The model has no live web access, so AI prices reflect its training data. Put real prices in the catalog for anything
-that matters. The sample catalog uses approximate current street prices, not verified quotes.
+Bedrock has no live web access. Catalog values are the source of truth for operational decisions. The included
+catalog is sample data, so replace it with your store's real price feed and update `price_checked_at`.
 
 ## Store data in Amazon S3 + AWS Lambda (real prices and rates)
 
-After Bedrock identifies the items, the server invokes the Lambda **`reconomy-catalog`**
-(`lambda/catalog/handler.py`). It loads `data/catalog.csv` and `data/rates.json` from the S3 bucket
-`reconomy-data-<account>` and matches each item to a catalog product (brand + model words). Matched items use the
-**real retail price** instead of the AI's guess. Ambiguous names (e.g. "Apple iPhone" with no model) are not
-matched, and the AI estimate is shown and labelled as such. All rates in the profit math come from `rates.json`.
+After Bedrock identifies the items, the server invokes **`reconomy-catalog`** (`lambda/catalog/handler.py`). It loads
+`data/catalog.csv` and `data/rates.json` from `reconomy-data-<account>`, and only returns a catalog reference for a
+high-confidence, unambiguous brand/model match supported by visible evidence. The response records a `verified`,
+`review`, `ambiguous` or `unmatched` status, score, price type and date. Weak matches intentionally keep the AI's
+conservative market range. Route rates come from `rates.json`.
 
 ```
 .venv/bin/python scripts/setup_aws.py              # create/update bucket, role, Lambda (idempotent)
@@ -125,40 +130,33 @@ If the Lambda is unavailable, the app keeps working with AI estimates and built-
 
 ## Decision logic (`logic.js`)
 
-Built around the three gaps in the Reconomy presentation.
+The algorithm has four simple stages:
 
-**1. Net recovery value is always the objective.** Every route is scored with the same formula:
+1. **Check the evidence.** The AI reports only evidence it can see: visible text, brand/model, condition and
+   defects. A weak identity, wide price range, unclear condition, ambiguous catalog match, risky repair or
+   near-tied result becomes an amber **review** flag rather than a hidden assumption.
+2. **Calculate conservative recovery for every route.** Every route uses the same formula:
 
-```
-NRV = sellThrough x price + (1 - sellThrough) x salvage          expected revenue (unsold goods are recycled)
-    - fees - fixed costs - repair
-    - price x weekly depreciation x days / 7                       value lost while the item waits
-```
+   ```
+   conservative recovery = expected sale + unsold-item salvage
+                         - marketplace fees - handling - repair - disposal
+                         - market value lost while waiting
+   ```
 
-**2. Each route has its own cost profile** (`ROUTES`, overridable in `data/rates.json` → `routes`):
+   Expected sale chance changes with the route, condition, visible defects and evidence confidence. Refurbishment
+   also includes the chance that a functional repair succeeds. This makes a risky repair less attractive than a
+   clean, verified resale even when its headline price looks higher.
+3. **Bundle only compatible low-value items.** The AI supplies an explicit compatible `bundleKey` such as
+   `usb-c-cable` or `plain-shirt`. Reconomy compares every small compatible subset with selling those members
+   separately and accepts a bundle only when it clears a minimum $0.50 uplift. It never bundles an entire broad
+   category such as apparel. Removing an item from a bundle re-prices the remaining members; a one-item bundle
+   safely returns to that item's individual route.
+4. **Recommend and explain.** The highest conservative recovery wins. If a more circular route is within $0.50
+   or 3%, Reconomy shows it as a greener option without hiding the money difference. Savings are always compared
+   to scrap, and the result counts items kept in use.
 
-| Route | Sells for | Fees | Fixed | Days | Sell-through |
-|---|---|---|---|---|---|
-| Resell | used price as-is | 12% | $5 handling | 14 | 90% |
-| Refurbish | 92% of used-market value, minus repair | 12% | $10 bench labor | 21 | 95% |
-| Bundle | 75% of the lot's single prices | 8% | $7 per lot + $0.50 per item | 7 | 98% |
-| Donate | tax benefit 25% of fair value | – | $3 shipping | – | – |
-| Scrap | material value | – | disposal fee | – | – |
-
-**3. Low-value items are bundled.** After scoring each item alone, a plan-level optimiser looks at low-value
-items per category (where one listing's handling would eat at least a third of the item's value). It starts with
-all of them, removes any item that adds less to the lot than it earns alone, and accepts the lot only if it beats
-selling separately. Each member gets its own best value plus a share of the lot's surplus, so every member earns
-more in the lot. On Approve, removing an item re-prices the lot; choosing Bundle again re-forms it (`replan`).
-
-**Uncertain prices are priced cautiously.** Catalog prices are trusted. AI estimates are shaded toward the low end
-of their own range as confidence drops: `price - (1 - confidence) x (price - low)`.
-
-**Repurpose and reduce waste.** The highest NRV always wins. If a more circular route (reuse > repair > reuse in
-bulk > repurpose > recycle) is within $0.50 or 3%, it is shown as a greener option. The result shows how many
-items were kept in use instead of scrapped.
-
-Money saved = recommended NRV - scrap NRV. All rates are sample assumptions.
+Each analysis resets to built-in rates before applying the current S3 rate file, so a failed catalog lookup cannot
+reuse rates from a prior analysis. All rates are sample assumptions and should be replaced with store data.
 
 Tests: `node --test tests/logic.test.mjs` (decision engine) and
 `.venv/bin/python -m unittest discover lambda/catalog` (catalog matcher).

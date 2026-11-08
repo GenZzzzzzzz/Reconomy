@@ -1,4 +1,4 @@
-import { normalizeItem, planDecisions, buildReason, applyRates, applyCatalogMatch, OPTIONS } from './logic.js';
+import { normalizeItem, planDecisions, buildReason, applyRates, resetRates, applyCatalogMatch, OPTIONS } from './logic.js';
 import { API_BASE } from './config.js';
 
 export const MAX_IMAGES = 8;
@@ -42,8 +42,9 @@ async function postJson(url, payload) {
 // Local Bedrock flow: AI inspects photos, logic.js computes the money, AI explains the result.
 async function localAnalyze(dataUrls) {
   const { items: raw, catalog } = await postJson('/api/analyze', { images: dataUrls.map((u) => u.split(',')[1]) });
-  // Store's real rates and catalog prices come from S3 via the reconomy-catalog Lambda.
+  // Rates are reset for every analysis. A failed catalog lookup cannot reuse the previous item's rates.
   if (catalog?.ok) applyRates(catalog.rates);
+  else resetRates();
   const items = planDecisions(raw
     .map((r) => normalizeItem(r, dataUrls.length))
     .map((it, i) => applyCatalogMatch(it, catalog?.ok ? catalog.matches[i] : null)));
@@ -52,13 +53,19 @@ async function localAnalyze(dataUrls) {
     : { ok: false, error: catalog?.error || 'Catalog lookup unavailable.' };
   if (!items.length) return { mode: 'local', id: null, items, catalog: catalogInfo };
   const facts = items.map((it, i) => ({
-    index: i, name: it.name, condition: it.condition, defects: it.defects,
-    priceSource: it.priceSource === 'catalog' ? `store catalog (${it.sku})` : 'AI estimate',
-    originalPrice: it.estimatedOriginalPrice,
+    index: i, name: it.name, category: it.category, condition: it.condition, defects: it.defects,
+    priceSource: it.priceSource === 'catalog' ? `verified store catalog (${it.sku})` : 'conservative AI market estimate',
+    referencePrice: it.estimatedOriginalPrice,
+    priceType: it.priceType,
+    identityConfidence: it.identityConfidence,
+    conditionConfidence: it.conditionConfidence,
+    priceConfidence: it.priceConfidence,
+    assessmentNeedsReview: it.decision.needsReview,
+    reviewReasons: it.decision.reviewReasons,
     recommended: it.decision.best, savedVersusScrap: it.decision.savings,
     netRecoveryValueByOption: Object.fromEntries(it.decision.ranked.map((k) => [k, it.decision.results[k].net])),
     notViable: OPTIONS.filter((k) => !it.decision.results[k].viable),
-    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size } : null,
+    bundle: it.decision.best === 'bundle' ? { lot: it.decision.results.bundle.lot.id, itemsInLot: it.decision.results.bundle.lot.size, key: it.decision.results.bundle.lot.key } : null,
     greenerOption: it.decision.greener ? { route: it.decision.greener.route, costsLess: it.decision.greener.gap } : null,
   }));
   let reasons = null;

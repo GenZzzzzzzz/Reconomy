@@ -837,3 +837,14 @@ button.primary:disabled { opacity: .4; box-shadow: none; }
 .offline-note { justify-content: space-between; gap: 12px; }
 .offline-note span { flex: 1; min-width: 220px; }
 .offline-note button { padding: 7px 14px; font-size: 13px; }
+
+/* Assessment evidence flags */
+.review-note {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; padding: 10px 12px;
+  background: rgba(251, 191, 36, .07); border: 1px solid rgba(251, 191, 36, .28); border-radius: 10px;
+  color: #f6d787; font-size: 13px; line-height: 1.45;
+}
+.review-note b { color: #fbbf24; flex: none; }
+.review-note span { color: #d8c384; }
+.tile-sub .numwrap { font-size: inherit; }
+.tile-sub .tip { margin-left: 3px; }
