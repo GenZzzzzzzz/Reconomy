@@ -153,15 +153,19 @@ Rules:
 - Grade the condition you can see: A = no visible wear, B = light wear, C = clear wear, marks or stains, D = heavy damage.
   If some sides are not visible, grade what you can see and lower conditionConfidence; do not lower the grade for that.
   Shadows, reflections, studio backgrounds and screen glare are not damage. List a defect only when you can see it.
-- retailPriceToday is what a US shopper pays for this product today at mainstream retailers (Amazon, Walmart, Target, Best Buy
-  or the brand's own store), including normal everyday discounts. Use the new price while the product is still sold new. If it is
-  no longer sold new, use today's certified-renewed price, which is often far below the launch price.
-  Never use a launch MSRP, an old price or a used price.
+- retailPriceToday is the MEDIAN price a US shopper pays for this exact product today across mainstream retailers (Amazon, Walmart,
+  Target, Best Buy, the brand's own store), including normal everyday discounts. Be objective: price the product, not the photo.
+  Photo quality, styling, the setting and the brand's prestige never change the price. Do not round up, do not guess high or low.
+  Use the new price while the product is still sold new. If it is no longer sold new, use today's certified-renewed price,
+  which is often far below the launch price. Never use a launch MSRP, a collector or resale-market price, or a used price.
   Price the actual product in the photos. If no model text is visible but the design is distinctive enough that a product expert
   would recognise the product line and generation, price that product as the closest visual match. If several generations share
   the design, price the one the visible details fit best; if they fit equally, price the older one.
-  Only for a generic design, price the most common mid-range product of that type; never assume a premium brand for a generic design.
+  For a generic design with no identifiable product line, price the median entry-level to mid-range product of that type
+  (for example generic over-ear headphones about $40 to $60); never assume a premium brand.
+  Sanity check before answering: would most shoppers find this price on a major retailer's site today? If not, correct it.
   In priceBasis, name the product you priced, say "new" or "renewed", and add "closest visual match" when no model text is visible.
+  Set priceConfidence low (0.5 or less) whenever the product was matched visually or is generic.
   This price rule does not relax the naming rules: name, brand and model stay limited to visible evidence.
 - Never name a model from a visual silhouette alone. A specific generation or model must be present in observedText; otherwise use productType only and lower identityConfidence.
 - Do not invent a brand, a model number, packaging or a working condition.
