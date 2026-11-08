@@ -104,7 +104,7 @@ const clampPrice = (n) => Math.min(Math.max(n, 1), 20000);
 const finite = (v) => (typeof v === 'number' || typeof v === 'string') && v !== '' && Number.isFinite(Number(v));
 
 // Original price = the typical street price the AI reports, kept inside its own low-high range.
-// Falls back to the older single estimatedOriginalPrice field (demo mode, old responses).
+// Falls back to the older single estimatedOriginalPrice field (older AI responses).
 function streetPrice(r) {
   let low = finite(r.priceLow) ? clampPrice(Number(r.priceLow)) : null;
   let high = finite(r.priceHigh) ? clampPrice(Number(r.priceHigh)) : null;
@@ -378,7 +378,7 @@ export function replan(items, chosen, changed = -1) {
 }
 
 // ---------- Explanations and totals ----------
-// Plain-language reason built from the numbers. Used in demo mode and as a fallback for the AI's own text.
+// Plain-language reason built from the numbers. Used as a fallback when the AI's own explanation fails.
 export function buildReason(item, d) {
   const best = d.best;
   const r = d.results[best];

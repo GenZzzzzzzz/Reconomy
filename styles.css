@@ -831,3 +831,9 @@ button.primary:disabled { opacity: .4; box-shadow: none; }
   font: 600 12px var(--mono); color: var(--cyan); border: 1px solid rgba(42, 212, 236, .35); background: rgba(42, 212, 236, .08); }
 .algo b { font-size: 14px; color: var(--text); }
 .algo span { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+/* AI connection state */
+.mode.offline { color: #fbbf24; border-color: rgba(251, 191, 36, .5); }
+.offline-note { justify-content: space-between; gap: 12px; }
+.offline-note span { flex: 1; min-width: 220px; }
+.offline-note button { padding: 7px 14px; font-size: 13px; }

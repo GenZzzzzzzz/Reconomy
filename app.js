@@ -7,8 +7,9 @@ import { homeHTML, bindHome } from './home.js';
 
 const { analyze, approve, resizeImage, MAX_IMAGES } = api;
 await api.detectMode();
-const mode = api.mode; // 'aws' | 'local' | 'demo'
-const isReal = mode !== 'demo';
+// Live AI connection state: 'aws' | 'local' | 'offline'. Read on every render, it can change mid-session.
+const currentMode = () => api.mode;
+const online = () => api.mode !== 'offline';
 
 const STEPS = ['Upload', 'Assess', 'Compare', 'Approve', 'Result'];
 
@@ -54,12 +55,13 @@ function renderNav() {
   $navCta.textContent = view === 'home' ? 'Assess returns' : 'Home';
   $navCta.href = view === 'home' ? '#assess' : '#';
   $navCta.classList.toggle('primary', view === 'home');
-  $mode.textContent = { aws: 'Live · AWS', local: 'Live · Bedrock', demo: 'Demo mode' }[mode];
-  $mode.className = 'mode ' + (isReal ? 'live' : 'demo');
+  const mode = currentMode();
+  $mode.textContent = { aws: 'Live · AWS', local: 'Live · Bedrock', offline: 'AI offline' }[mode];
+  $mode.className = 'mode ' + (online() ? 'live' : 'offline');
   $mode.title = {
     aws: 'Images go to Amazon S3. Lambda calls Amazon Bedrock and stores the decisions in DynamoDB.',
     local: `The local server sends your photos to Amazon Bedrock (${api.modelId}). Nothing is stored.`,
-    demo: 'No AI backend found. The AI is simulated in the browser and results are examples.',
+    offline: api.OFFLINE_MESSAGE,
   }[mode];
 }
 
@@ -114,6 +116,7 @@ function screenUpload() {
   const room = MAX_IMAGES - state.images.length;
   return `
     ${title('Upload returned items', 'Add photos of the returns. AI identifies each item, so there is nothing to type.')}
+    ${online() ? '' : `<div class="banner warn offline-note" role="status"><span>${esc(api.OFFLINE_MESSAGE)}</span><button type="button" id="recheck">Check again</button></div>`}
     <div class="ws-split">
       <div class="card up-main">
         <label class="dz ${state.images.length ? 'compact' : ''}" for="photos" id="dropzone">
@@ -137,7 +140,7 @@ function screenUpload() {
     </div>
     ${actionBar(
       `${num(state.images.length, 'Photos ready to analyze.')} <span>of ${num(MAX_IMAGES, 'Maximum photos per analysis.')} photos added</span>`,
-      `<button type="button" class="primary" id="next" ${state.images.length ? '' : 'disabled'}>${ICON.spark} Analyze with AI</button>`,
+      `<button type="button" class="primary" id="next" ${state.images.length && online() ? '' : 'disabled'}>${ICON.spark} Analyze with AI</button>`,
     )}`;
 }
 
@@ -163,7 +166,7 @@ function itemList() {
 
 function catalogBanner() {
   const c = state.catalog;
-  if (!c || mode !== 'local') return '';
+  if (!c || state.mode !== 'local') return '';
   if (!c.ok) return `<div class="banner warn" role="status">${esc(c.error)} Run <span class="mono">scripts/setup_aws.py</span> to enable it.</div>`;
   const hits = state.items.filter((x) => x.priceSource === 'catalog').length;
   return `<div class="banner" role="status"><span class="dot"></span>AWS Lambda matched
@@ -239,10 +242,10 @@ function screenAssess() {
         <div class="progress" role="progressbar" aria-label="Analysis in progress"><span></span></div>
         <div class="scan-meta">
           <ul class="stages">
-            <li>${isReal ? 'Amazon Bedrock identifies and grades each product' : 'Simulating AI recognition'}</li>
-            ${mode === 'local' ? '<li>AWS Lambda matches items to your catalog in Amazon S3</li>' : ''}
-            <li>Reconomy prices resell, refurbish, donate and scrap</li>
-            ${isReal ? '<li>Amazon Bedrock writes the reason for each decision</li>' : ''}
+            <li>Amazon Bedrock identifies and grades each product</li>
+            ${currentMode() === 'local' ? '<li>AWS Lambda matches items to your catalog in Amazon S3</li>' : ''}
+            <li>Reconomy prices resell, refurbish, bundle, donate and scrap</li>
+            <li>Amazon Bedrock writes the reason for each decision</li>
           </ul>
           <span class="elapsed">${num('<span id="elapsed">0</span>s', 'Time since the photos were sent. Usually 5 to 20 seconds.')}</span>
         </div>
@@ -250,7 +253,7 @@ function screenAssess() {
   }
   const it = state.items[state.active];
   return `
-    ${title('AI assessment', `Found ${num(state.items.length, 'Products identified in your photos.')} item(s)${isReal && api.modelId ? ` · assessed by <span class="mono">${esc(api.modelId)}</span>` : ''}. Pick an item to review it.`)}
+    ${title('AI assessment', `Found ${num(state.items.length, 'Products identified in your photos.')} item(s)${api.modelId ? ` · assessed by <span class="mono">${esc(api.modelId)}</span>` : ''}. Pick an item to review it.`)}
     ${catalogBanner()}
     <div class="ws-main">${itemList()}${assessDetail(it)}</div>
     ${actionBar(
@@ -424,8 +427,7 @@ function screenResult() {
     ${title('Recovery plan approved', {
       aws: 'Saved in DynamoDB. Here is what each item earns and what to do next.',
       local: 'Assessed by Amazon Bedrock. Here is what each item earns and what to do next.',
-      demo: 'Demo mode does not save anything. Here is what each item would earn.',
-    }[mode])}
+    }[state.mode] || 'Here is what each item earns and what to do next.')}
     <div class="card res-hero">
       <div class="res-hero-main"><span class="label">Saved versus scrapping everything</span>${num(usd(t.saved), 'Extra money recovered compared with scrapping every item.', 'huge')}</div>
       <div class="res-hero-side">
@@ -557,6 +559,11 @@ function bind() {
       render(false);
     }));
     $('next').addEventListener('click', runAnalysis);
+    $('recheck')?.addEventListener('click', async () => {
+      await api.detectMode();
+      state.error = online() ? '' : 'Still offline. Is the server running?';
+      render(false);
+    });
   }
   if (state.step === 1 && !state.loading) $('next').addEventListener('click', () => go(2));
   if (state.step === 2) $('next').addEventListener('click', () => go(3));

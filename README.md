@@ -69,8 +69,9 @@ Photos: JPG, PNG, WEBP and HEIC (iPhone). Chrome cannot decode HEIC, so the serv
 Flow: Bedrock inspects the photos (product, category, price, condition, defects) → `logic.js` computes the
 profit of each route and picks the max → Bedrock writes the explanation from those exact numbers.
 
-Do not serve this folder with `python3 -m http.server`. It would expose `.env`. Without the Bedrock server the
-app falls back to demo mode (simulated AI).
+Do not serve this folder with `python3 -m http.server`. It would expose `.env`.
+Without a reachable AI server the app shows **AI offline**, explains how to start it, and produces no results
+(there are no simulated or sample results). Static hosting such as GitHub Pages therefore cannot run the analysis.
 
 ## Deploy the real backend
 

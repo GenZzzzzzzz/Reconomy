@@ -3,28 +3,37 @@ import { API_BASE } from './config.js';
 
 export const MAX_IMAGES = 8;
 
-// 'aws'   : deployed Lambda backend (config.js API_BASE)
-// 'local' : local Python server calling Amazon Bedrock (server/app.py)
-// 'demo'  : no backend, AI simulated in the browser
-export let mode = 'demo';
+// 'aws'     : deployed Lambda backend (config.js API_BASE)
+// 'local'   : local Python server calling Amazon Bedrock (server/app.py)
+// 'offline' : no AI reachable. Nothing is analyzed; there are no simulated results.
+export let mode = 'offline';
 export let modelId = '';
 
+export const OFFLINE_MESSAGE = "The AI isn't connected. Start the server with .venv/bin/python server/app.py in the Reconomy folder, then open http://localhost:8000.";
+
 export async function detectMode() {
+  mode = 'offline';
   if (API_BASE) { mode = 'aws'; return mode; }
   try {
     const res = await fetch('/api/health', { cache: 'no-store' });
-    const body = res.ok ? await res.json() : null;
+    const body = res.ok ? await res.json().catch(() => null) : null;
     if (body?.ok) { mode = 'local'; modelId = body.model || ''; }
-  } catch { /* static server: stay in demo */ }
+  } catch { /* no AI server reachable */ }
   return mode;
 }
 
 async function postJson(url, payload) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    if (!API_BASE) mode = 'offline';
+    throw new Error(OFFLINE_MESSAGE);
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Server error (${res.status}).`);
   return body;
@@ -100,13 +109,15 @@ export async function resizeImage(file) {
   return c.toDataURL('image/jpeg', 0.82);
 }
 
+// Real AI analysis only. If no AI is reachable, this throws instead of inventing results.
 export async function analyze(dataUrls) {
+  if (mode === 'offline') await detectMode(); // picks up a server started after the page loaded
   if (mode === 'aws') {
     const body = await postJson(`${API_BASE}/analyze`, { images: dataUrls.map((u) => u.split(',')[1]) });
     return { mode: 'aws', ...body };
   }
   if (mode === 'local') return localAnalyze(dataUrls);
-  return mockAnalyze(dataUrls);
+  throw new Error(OFFLINE_MESSAGE);
 }
 
 export async function approve(id, choices) {
@@ -117,40 +128,4 @@ export async function approve(id, choices) {
     body: JSON.stringify({ id, choices }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server error (${res.status}).`);
-}
-
-// ---- Demo mode: simulated "AI". Results are NOT real image recognition. ----
-const CATALOG = [
-  { name: 'Wireless headphones', category: 'electronics', price: 129 },
-  { name: 'Running sneakers', category: 'apparel', price: 95 },
-  { name: 'Office chair', category: 'furniture', price: 220 },
-  { name: 'Espresso machine', category: 'appliances', price: 180 },
-  { name: 'Building block set', category: 'toys', price: 60 },
-  { name: 'Bluetooth speaker', category: 'electronics', price: 80 },
-  { name: 'Denim jacket', category: 'apparel', price: 70 },
-];
-const DEFECT_SETS = [[], ['cosmetic'], ['cosmetic', 'hygiene'], ['functional'], ['missing']];
-
-function hash(s) {
-  let h = 2166136261;
-  const step = Math.max(1, Math.floor(s.length / 2000));
-  for (let i = 0; i < s.length; i += step) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-
-async function mockAnalyze(dataUrls) {
-  await new Promise((r) => setTimeout(r, 4800));
-  const raw = dataUrls.map((u, i) => {
-    const h = hash(u);
-    const p = CATALOG[h % CATALOG.length];
-    const item = normalizeItem({
-      name: p.name, category: p.category, estimatedOriginalPrice: p.price,
-      condition: 'ABBCD'[(h >> 3) % 5], defects: DEFECT_SETS[(h >> 7) % DEFECT_SETS.length],
-      hasPackaging: (h >> 13) % 2 === 0, confidence: 0.7 + ((h >> 11) % 25) / 100,
-      notes: 'Simulated result (demo mode).', imageIndexes: [i],
-    }, dataUrls.length);
-    return applyCatalogMatch(item, null);
-  });
-  const items = planDecisions(raw).map((it) => ({ ...it, reason: buildReason(it, it.decision) }));
-  return { mode: 'demo', id: null, items };
 }
