@@ -8,8 +8,9 @@ and the money saved versus scrapping.
 
 ## Pages
 
-- **Home** (`#`): our title plus the before/after value of AI decisions: loss per returned dollar, a $100M
-  scale-up, the comparison table and industry benchmarks. Code: `home.js`. Hero photo from Unsplash.
+- **Home** (`#`): our title and only the figures with a clear before/after gap: loss per returned dollar
+  ($0.90 vs $0.51), value recovered (40% vs 70%), value wasted per $1M (-50%), days back on the shelf, margin per
+  item (1x vs 3-5x), and the saving per $1M / $100M. Code: `home.js`. Hero photo from Unsplash.
 - **Tool** (`#assess`): an operations-desk layout for Upload → Assess → Compare → Approve → Result.
   Clickable stepper, sticky action bar, item list with detail panel, condition-grade meter, profit-by-route chart,
   segmented route picker on Approve, next-step checklists and a CSV export of the approved plan.
@@ -18,11 +19,10 @@ Statistics on the home page (each has an info tip with its source):
 NRF and Happy Returns, *2025 Retail Returns Landscape* (15.8% of sales, $849.9B, 19.3% online) and McKinsey
 reverse logistics research ($200B spent recovering value; ~50% of worth recovered, as cited by GSPANN).
 
-The **Before and after** section compares returns cost for an online retailer with $1M in sales, manual vs
-AI-driven decisions. Before uses the manual end of each published range, after uses the AI-driven end:
-recovery below 40% vs above 70% of item value and 15-30% lower cost per return (ReturnPro maturity model),
-processing cost 15-30% of item price and 8-12 vs 3-5 days to shelf (Locus), and the NRF 19.3% online return rate.
-ReturnPro and Locus are vendors; these are benchmarks, not measured Reconomy results. The model is in `home.js`.
+The before/after figures use the manual end of each published range for "Manual" and the AI-driven end for
+"Reconomy": ReturnPro's maturity model (recovery below 40% vs above 70%, 15-30% lower cost per return, 3-5x margin
+from refurbish and resell vs liquidation), Locus (processing 15-30% of item price, 8-12 vs 3-5 days to shelf) and the
+NRF 19.3% online return rate. ReturnPro and Locus are vendors; these are benchmarks, not measured Reconomy results.
 
 ## Architecture
 

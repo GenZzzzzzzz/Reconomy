@@ -1,116 +1,93 @@
-// Home page: our title + the before/after value of AI decisions. Every number has a sourced info tip.
+// Home page: our title + only the before/after figures with a clear contrast.
+// Every number has a sourced info tip.
 
 const NRF = 'NRF and Happy Returns, 2025 Retail Returns Landscape.';
 const LOCUS = 'Locus, "How AI-Optimized Reverse Logistics Is Becoming Retail\'s Hidden Competitive Edge" (vendor benchmark).';
 const RP = 'ReturnPro, "What Is Reverse Logistics? The Complete Retailer\'s Guide" (vendor maturity model: Stage 1 manual vs Stage 4 AI-driven routing).';
 
 // ---------- Before/after model: online retailer, $1M in sales ----------
-// Before = the manual (least mature) end of each published range. After = the AI-driven (most mature) end.
+// Before = the manual end of each published range. After = the AI-driven end.
 const M = {
   sales: 1_000_000,
-  returnRate: 0.193,     // NRF: 19.3% of online sales returned
-  recBefore: 0.40,       // ReturnPro Stage 1 (manual): recovery below 40% of item value
-  recAfter: 0.70,        // ReturnPro Stage 4 (AI-driven routing): recovery above 70%
-  procCost: 0.30,        // Locus: processing costs 15-30% of item price (manual = high end)
-  procCut: 0.30,         // ReturnPro: 15-30% lower cost per return at Stage 3-4 (upper end)
-  scale: 100_000_000,    // scale-up example
+  returnRate: 0.193,  // NRF: 19.3% of online sales returned
+  recBefore: 0.40,    // ReturnPro Stage 1 (manual): recovery below 40%
+  recAfter: 0.70,     // ReturnPro Stage 4 (AI-driven routing): recovery above 70%
+  procCost: 0.30,     // Locus: processing costs 15-30% of item price (manual = high end)
+  procCut: 0.30,      // ReturnPro: 15-30% lower cost per return at Stage 3-4 (upper end)
+  scale: 100_000_000,
 };
 const returned = M.sales * M.returnRate;
-const before = { recovered: returned * M.recBefore, lost: returned * (1 - M.recBefore), proc: returned * M.procCost };
-const after = { recovered: returned * M.recAfter, lost: returned * (1 - M.recAfter), proc: returned * M.procCost * (1 - M.procCut) };
-before.total = before.lost + before.proc;
-after.total = after.lost + after.proc;
-const saved = before.total - after.total;
-const perDollarBefore = before.total / returned;
-const perDollarAfter = after.total / returned;
+const lostBefore = returned * (1 - M.recBefore);
+const lostAfter = returned * (1 - M.recAfter);
+const totalBefore = lostBefore + returned * M.procCost;
+const totalAfter = lostAfter + returned * M.procCost * (1 - M.procCut);
+const saved = totalBefore - totalAfter;
 
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const cents = (n) => '$' + n.toFixed(2);
 const short = (n) => (n >= 1e6 ? `$${+(n / 1e6).toFixed(1)}M` : money(n));
 const pctTxt = (n) => `${+(n * 100).toFixed(1)}%`;
 
-function moneyTable(num) {
-  const rows = [
+// One contrast card. b/a are bar widths (0-1) so the gap is visible at a glance.
+const card = (num, c) => `
+  <article class="cx">
+    <header class="cx-top">
+      <h3>${c.label}</h3>
+      ${num(c.delta, c.deltaTip, 'cx-delta')}
+    </header>
+    <div class="cx-vals">
+      <div class="cx-v before"><span class="cx-k">Manual</span>${num(c.before, c.beforeTip, 'cx-n')}</div>
+      <span class="cx-arrow" aria-hidden="true">→</span>
+      <div class="cx-v after"><span class="cx-k">Reconomy</span>${num(c.after, c.afterTip, 'cx-n')}</div>
+    </div>
+    <div class="cx-bars" aria-hidden="true">
+      <span class="bar-b" style="width:${(c.b * 100).toFixed(0)}%"></span>
+      <span class="bar-a" style="width:${(c.a * 100).toFixed(0)}%"></span>
+    </div>
+    <p class="cx-note">${c.note}</p>
+  </article>`;
+
+function cards(num) {
+  const perM = num('$1M', 'Example: an online retailer with $1M in sales. The figures scale with sales.');
+  return [
     {
-      label: 'Merchandise returned',
-      b: num(money(returned), `${money(M.sales)} online sales × ${pctTxt(M.returnRate)} online return rate. ${NRF}`),
-      a: num(money(returned), 'Same returns. Better decisions change what happens to them, not how many come back.'),
-      d: '<span class="muted">–</span>',
+      label: 'Value recovered', note: 'of each returned item\'s worth',
+      before: pctTxt(M.recBefore), beforeTip: `Manual processing recovers below 40% of item value. ${RP}`,
+      after: pctTxt(M.recAfter), afterTip: `AI-driven routing recovers above 70% of item value. ${RP}`,
+      delta: '+75%', deltaTip: '70% ÷ 40% − 1: three quarters more value from the same returns.',
+      b: M.recBefore, a: M.recAfter,
     },
     {
-      label: 'Value recovered',
-      b: num(money(before.recovered), `${pctTxt(M.recBefore)} of item value: manual processing recovers below 40%. ${RP}`),
-      a: num(money(after.recovered), `${pctTxt(M.recAfter)} of item value: AI-driven routing recovers above 70%. ${RP}`),
-      d: num(`+${money(after.recovered - before.recovered)}`, 'Extra value recovered by routing each item to its best channel.', 'accent'),
+      label: 'Value wasted', note: `per ${perM} in online sales`,
+      before: money(lostBefore), beforeTip: `${pctTxt(1 - M.recBefore)} of ${money(returned)} returned (${pctTxt(M.returnRate)} of online sales, ${NRF}) is never recovered.`,
+      after: money(lostAfter), afterTip: `${pctTxt(1 - M.recAfter)} of ${money(returned)} returned is never recovered with AI-driven routing.`,
+      delta: '−50%', deltaTip: 'Waste cut in half.',
+      b: 1, a: lostAfter / lostBefore,
     },
     {
-      label: 'Value wasted',
-      b: num(money(before.lost), `${pctTxt(1 - M.recBefore)} of returned value is never recovered.`, 'bad'),
-      a: num(money(after.lost), `${pctTxt(1 - M.recAfter)} of returned value is never recovered.`),
-      d: num(`−${money(before.lost - after.lost)}`, 'Waste cut in half.', 'accent'),
+      label: 'Back on the shelf', note: 'from return to resale-ready',
+      before: '8–12 days', beforeTip: `Manual processing. ${LOCUS}`,
+      after: '3–5 days', afterTip: `AI-powered processing. ${LOCUS}`,
+      delta: '~1 week sooner', deltaTip: `Midpoints 10 vs 4 days. Seasonal goods lose 1–3% of value per week. ${LOCUS}`,
+      b: 1, a: 0.4,
     },
     {
-      label: 'Processing cost',
-      b: num(money(before.proc), `Shipping, inspection, repackaging and restocking at ${pctTxt(M.procCost)} of item price (high end of 15–30% for manual handling). ${LOCUS}`),
-      a: num(money(after.proc), `${pctTxt(M.procCut)} lower cost per return at the most mature, AI-driven stage (top of the 15–30% range). ${RP}`),
-      d: num(`−${money(before.proc - after.proc)}`, 'Lower handling cost per returned item.', 'accent'),
+      label: 'Margin per item', note: 'refurbish and resell instead of liquidating',
+      before: '1×', beforeTip: `Wholesale liquidation, the default for many returns. ${RP}`,
+      after: '3–5×', afterTip: `Refurbishing and reselling through an open-box channel. ${RP}`,
+      delta: 'up to 5×', deltaTip: `The margin gap between a liquidated and a refurbished, resold item. ${RP}`,
+      b: 0.2, a: 0.8,
     },
-  ];
-  return `
-    <table class="cmp">
-      <caption class="sr-only">Returns cost for an online retailer with $1M in sales, manual versus AI-driven decisions</caption>
-      <thead><tr><th scope="col">Per ${num(money(M.sales), 'Example online sales. The savings scale with sales.')} of online sales</th><th scope="col" class="r">Before: manual</th><th scope="col" class="r">After: AI decisions</th><th scope="col" class="r">Difference</th></tr></thead>
-      <tbody>
-        ${rows.map((r) => `<tr><th scope="row">${r.label}</th><td class="r" data-label="Before">${r.b}</td><td class="r" data-label="After">${r.a}</td><td class="r" data-label="Difference">${r.d}</td></tr>`).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <th scope="row">Total lost on returns</th>
-          <td class="r" data-label="Before">${num(money(before.total), 'Value wasted + processing cost, manual.', 'bad')}</td>
-          <td class="r" data-label="After">${num(money(after.total), 'Value wasted + processing cost, AI-driven.')}</td>
-          <td class="r" data-label="Saved">${num(money(saved), `Saved per ${money(M.sales)} of online sales: ${pctTxt(saved / M.sales)} of revenue.`, 'accent big-save')}</td>
-        </tr>
-      </tfoot>
-    </table>`;
+  ].map((c) => card(num, c)).join('');
 }
 
-function benchTable(num) {
-  const rows = [
-    ['Value recovered', num('Below 40%', `Stage 1, manual processing. ${RP}`, 'bad'), num('Above 70%', `Stage 4, AI-driven routing. ${RP}`, 'accent')],
-    ['Liquidated vs refurbished and resold', num('1×', `Margin from wholesale liquidation, the default for many returns. ${RP}`), num('3–5×', `Margin from refurbishing and reselling through an open-box channel instead. ${RP}`, 'accent')],
-    ['Cost per return', '<span class="muted">High</span>', num('15–30% lower', `At Stage 3–4 maturity. ${RP}`, 'accent')],
-    ['Return-to-shelf time', num('8–12 days', `Manual processing. ${LOCUS}`), num('3–5 days', `AI-powered processing. ${LOCUS}`, 'accent')],
-    ['Labor cost', '<span class="muted">Baseline</span>', num('~30% lower', `Automated triage replaces manual inspection and sorting. ${LOCUS}`, 'accent')],
-  ];
-  return `
-    <table class="cmp bench">
-      <caption class="sr-only">Manual versus AI-driven returns benchmarks</caption>
-      <thead><tr><th scope="col">Industry benchmark</th><th scope="col" class="r">Manual</th><th scope="col" class="r">AI-driven</th></tr></thead>
-      <tbody>${rows.map(([l, b, a]) => `<tr><th scope="row">${l}</th><td class="r" data-label="Manual">${b}</td><td class="r" data-label="AI-driven">${a}</td></tr>`).join('')}</tbody>
-    </table>`;
-}
-
-// Hero panel: how much of every returned dollar is lost, before vs after, plus the scale-up.
-function valuePanel(num) {
+export function homeHTML({ num }) {
   const bar = (cls, label, v, tipTxt) => `
     <div class="lb-row">
       <span class="lb-label">${label}</span>
       <span class="lb-track"><span class="lb-fill ${cls}" style="width:${(v * 100).toFixed(1)}%"></span></span>
       ${num(cents(v), tipTxt, cls === 'bad' ? 'bad lb-val' : 'accent lb-val')}
     </div>`;
-  return `
-    <div class="card hero-panel">
-      <span class="label">Lost from every returned dollar</span>
-      ${bar('bad', 'Manual', perDollarBefore, `Total lost (${money(before.total)}) ÷ merchandise returned (${money(returned)}).`)}
-      ${bar('good', 'Reconomy', perDollarAfter, `Total lost with AI-driven decisions (${money(after.total)}) ÷ merchandise returned (${money(returned)}).`)}
-      <div class="hp-scale">
-        <span class="label">Saved at ${num(short(M.scale), 'Example: an online retailer with $100M in sales.')} online sales</span>
-        ${num(short(saved * (M.scale / M.sales)), `${money(saved)} saved per $1M × 100. Same rates as the table below.`, 'accent hp-big')}
-      </div>
-    </div>`;
-}
-
-export function homeHTML({ num }) {
   return `
   <section class="hero hero-static" id="hero" aria-label="Reconomy">
     <div class="hero-bg on" style="background-image:url('assets/hero-1.jpg')" aria-hidden="true"></div>
@@ -119,25 +96,39 @@ export function homeHTML({ num }) {
       <div class="hero-copy-static">
         <p class="eyebrow">Reconomy · AI returns recovery</p>
         <h1 class="hero-title">Turn returns<br>into revenue.</h1>
-        <p class="hero-sub">Manual sorting loses ${num(cents(perDollarBefore), 'Of every returned dollar, from the comparison table below.')} of every returned dollar. Reconomy's AI decisions cut that to ${num(cents(perDollarAfter), 'Of every returned dollar with AI-driven routing, from the comparison table below.')}.</p>
+        <p class="hero-sub">AI picks the most profitable route for every returned item: resell, refurbish, donate or scrap.</p>
         <div class="hero-cta">
           <a class="btn primary" href="#assess">Assess your returns <span aria-hidden="true">→</span></a>
-          <a class="btn link" href="#impact">See the comparison</a>
+          <a class="btn link" href="#impact">See the difference</a>
         </div>
       </div>
-      ${valuePanel(num)}
+      <div class="card hero-panel">
+        <span class="label">Lost from every returned dollar</span>
+        ${bar('bad', 'Manual', totalBefore / returned, `Value wasted plus processing cost (${money(totalBefore)}) ÷ merchandise returned (${money(returned)}).`)}
+        ${bar('good', 'Reconomy', totalAfter / returned, `Value wasted plus processing cost with AI-driven decisions (${money(totalAfter)}) ÷ merchandise returned (${money(returned)}).`)}
+      </div>
     </div>
   </section>
 
   <section class="band" id="impact">
     <div class="wrap">
       <p class="eyebrow">Before and after</p>
-      <h2>Manual sorting wastes most of every return.</h2>
-      <p class="helper">An online retailer with ${num(money(M.sales), 'Example size. The savings scale with sales.')} in sales.</p>
-      <div class="card cmp-card">${moneyTable(num)}</div>
-      <div class="card cmp-card">${benchTable(num)}</div>
-      <p class="fine">Before uses the manual end of each published range, after uses the AI-driven end. Industry and vendor benchmarks, not measured Reconomy results. Hover any number for its source.</p>
-      <div class="cta-inline"><a class="btn primary" href="#assess">Assess your returns <span aria-hidden="true">→</span></a></div>
+      <h2>Same returns. Very different results.</h2>
+      <p class="helper">Manual sorting compared with AI-driven decisions.</p>
+      <div class="cx-grid">${cards(num)}</div>
+
+      <div class="card save-band">
+        <div class="sb-main">
+          <span class="label">Saved per ${num('$1M', 'Example online retailer size. The savings scale with sales.')} in online sales</span>
+          ${num(money(saved), `Total lost on returns falls from ${money(totalBefore)} to ${money(totalAfter)}: value wasted plus processing cost, with processing ${pctTxt(M.procCut)} cheaper at the AI-driven stage (${RP}).`, 'sb-big')}
+        </div>
+        <div class="sb-side">
+          <span class="label">At ${num(short(M.scale), 'Example: an online retailer with $100M in sales.')} in online sales</span>
+          ${num(short(saved * (M.scale / M.sales)), `${money(saved)} per $1M × 100, same rates.`, 'sb-mid')}
+        </div>
+      </div>
+
+      <p class="fine">Manual uses the low end of each published range, Reconomy the AI-driven end. Industry and vendor benchmarks, not measured Reconomy results. Hover any number for its source.</p>
     </div>
   </section>
 
