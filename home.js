@@ -1,63 +1,142 @@
-// Home page: full-screen hero carousel + problem, decision, solution and AWS sections.
-// Every statistic carries an info tip with its source.
+// Home page: hero carousel, key stats, before/after comparison, workflow, AWS.
+// Every number carries an info tip with its source or formula.
 
-const NRF = 'NRF and Happy Returns, 2025 Retail Returns Landscape report.';
-const MCK = 'McKinsey, "From cost center to competitive advantage: Modernizing reverse logistics with AI".';
-const MCK50 = 'McKinsey estimate, as cited by GSPANN, "Five AI Fixes for a $850B Problem". Recovery comes via resale, liquidation or parts.';
+const NRF = 'NRF and Happy Returns, 2025 Retail Returns Landscape.';
+const MCK = 'McKinsey, "Modernizing reverse logistics with AI".';
+const MCK50 = 'McKinsey, as cited by GSPANN, "How to Solve the $850B Retail Returns Problem".';
+const LOCUS = 'Locus, "How AI-Optimized Reverse Logistics Is Becoming Retail\'s Hidden Competitive Edge" (vendor benchmark, manual vs AI-powered returns processing).';
 
-// Each slide's sub line is built with num() so every number gets its info tip.
+// ---------- Before/after model: online retailer, $1M in sales ----------
+// Inputs come straight from the sources above; outputs are simple arithmetic on them.
+const M = {
+  sales: 1_000_000,
+  returnRate: 0.193,      // NRF: 19.3% of online sales returned
+  recovered: 0.5,         // McKinsey: ~50% of a product's worth recovered
+  procCost: 0.225,        // Locus: processing costs 15-30% of item price (midpoint)
+  procCut: 0.15,          // Locus: ~15% lower processing cost per unit with AI
+  depreciation: 0.02,     // Locus: goods lose 1-3% per week (midpoint), back on shelf ~1 week sooner
+};
+const returned = M.sales * M.returnRate;
+const before = {
+  recovered: returned * M.recovered,
+  lost: returned * (1 - M.recovered),
+  proc: returned * M.procCost,
+};
+const preserved = returned * M.depreciation;
+const after = {
+  recovered: before.recovered + preserved,
+  lost: before.lost - preserved,
+  proc: before.proc * (1 - M.procCut),
+};
+before.total = before.lost + before.proc;
+after.total = after.lost + after.proc;
+const saved = before.total - after.total;
+
+const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
+const pctTxt = (n) => `${+(n * 100).toFixed(1)}%`;
+
 const SLIDES = [
   {
     tab: 'The problem', eyebrow: 'The returns problem', img: 'assets/hero-1.jpg',
-    title: 'Retail returns are<br>a huge, costly problem.',
-    sub: (num) => `Retailers expect ${num('15.8%', `Share of annual retail sales expected to be returned in 2025. Source: ${NRF}`)}
-      of annual sales, or ${num('$849.9B', `Total US retail returns expected in 2025. Source: ${NRF}`)}, to come back in 2025.`,
+    title: 'Returns are retail\'s<br>costliest leak.',
+    sub: (num) => `Retailers expect ${num('15.8%', `Share of US retail sales expected to be returned in 2025. ${NRF}`)} of sales, or ${num('$849.9B', `US retail returns expected in 2025. ${NRF}`)}, to come back in 2025.`,
   },
   {
-    tab: 'Online returns', eyebrow: 'Worse online', img: 'assets/hero-5.jpg',
-    title: 'Nearly one in five<br>online orders comes back.',
-    sub: (num) => `An estimated ${num('19.3%', `Share of online sales expected to be returned in 2025. Source: ${NRF}`)}
-      of online sales will be returned in 2025.`,
+    tab: 'Online', eyebrow: 'Worse online', img: 'assets/hero-5.jpg',
+    title: 'Online, it\'s<br>even worse.',
+    sub: (num) => `${num('19.3%', `Share of online sales expected to be returned in 2025. ${NRF}`)} of online sales are returned.`,
   },
   {
-    tab: 'The hard part', eyebrow: 'The biggest difficulty', img: 'assets/hero-2.jpg',
-    title: 'The hard part starts<br>when the item arrives.',
-    sub: () => 'Resell, refurbish, donate or scrap? Deciding what to do with each returned item is where value is won or lost.',
+    tab: 'The decision', eyebrow: 'The hard part', img: 'assets/hero-2.jpg',
+    title: 'Every return needs<br>a decision.',
+    sub: () => 'Resell, refurbish, donate or scrap? Most are decided by guesswork.',
   },
   {
-    tab: 'Value left behind', eyebrow: 'Spending more, recovering less', img: 'assets/hero-4.jpg',
-    title: '$200 billion spent.<br>Only half recovered.',
-    sub: (num) => `US retailers spend an estimated ${num('$200B', `Spent each year by retailers to recover value from returned goods. Source: ${MCK}`)}
-      a year recovering value from returns, and still get back only about ${num('50%', `Share of a returned product's worth that is typically recovered. Source: ${MCK50}`)} of a product's worth.`,
+    tab: 'Value lost', eyebrow: 'Spending more, recovering less', img: 'assets/hero-4.jpg',
+    title: 'Spending more.<br>Recovering less.',
+    sub: (num) => `${num('$200B', `Spent each year by US retailers to recover value from returns. ${MCK}`)} a year goes into returns, yet only about ${num('50%', `Share of a returned product's worth typically recovered. ${MCK50}`)} of the value comes back.`,
   },
   {
-    tab: 'Better decisions', eyebrow: 'Reconomy', img: 'assets/hero-3.jpg',
-    title: 'Better decisions<br>change the math.',
-    sub: () => 'Reconomy compares resell, refurbish, donate and scrap for every item, and recommends the option with the highest profit.',
+    tab: 'The fix', eyebrow: 'Reconomy', img: 'assets/hero-3.jpg',
+    title: 'Better decisions.<br>Better margins.',
+    sub: () => 'Reconomy prices all four routes and recommends the most profitable one.',
   },
-];
-
-const ROUTES = [
-  ['Resell', 'Sell it as-is at a used price. Fast, but only if it works and looks the part.'],
-  ['Refurbish', 'Repair and clean it first. Worth it when the higher price beats the repair cost.'],
-  ['Donate', 'Give it to charity for a tax benefit. Better than scrap for items that still work.'],
-  ['Scrap', 'Recycle it for material value. The last resort, and often a loss after disposal fees.'],
 ];
 
 const FLOW = [
-  ['Upload', 'Drop in photos of returned items. Nothing to type.'],
-  ['Assess', 'AI names each product, grades its condition and spots defects.'],
-  ['Compare', 'All four routes are priced side by side. The most profitable one is highlighted.'],
-  ['Approve', 'A manager confirms the plan or overrides any item.'],
-  ['Result', 'See the money recovered versus scrapping, and the next step for every item.'],
+  ['Upload', 'Add photos. No typing.'],
+  ['Assess', 'AI identifies and grades each item.'],
+  ['Compare', 'Four routes, priced side by side.'],
+  ['Approve', 'Confirm the plan or override it.'],
+  ['Result', 'See the money recovered.'],
 ];
 
 const AWS = [
-  ['Amazon Bedrock', 'Reads the photos, identifies each product and writes the reason for every decision.'],
-  ['AWS Lambda', 'Matches each item to your product catalog and applies your business rates.'],
-  ['Amazon S3', 'Holds your catalog, rates and return photos in private, encrypted storage.'],
-  ['Amazon DynamoDB', 'Stores every assessment and approval in the deployable backend.'],
+  ['Amazon Bedrock', 'Identifies items and explains each decision.'],
+  ['AWS Lambda', 'Matches items to your catalog and rates.'],
+  ['Amazon S3', 'Stores catalog, rates and photos.'],
+  ['Amazon DynamoDB', 'Saves assessments and approvals.'],
 ];
+
+function moneyTable(num) {
+  const rows = [
+    {
+      label: 'Merchandise returned',
+      b: num(money(returned), `${money(M.sales)} online sales × ${pctTxt(M.returnRate)} online return rate. ${NRF}`),
+      a: num(money(returned), 'Same returns. Better decisions do not change how much comes back.'),
+      d: '<span class="muted">–</span>',
+    },
+    {
+      label: 'Value recovered',
+      b: num(money(before.recovered), `${pctTxt(M.recovered)} of returned value is recovered today. ${MCK50}`),
+      a: num(money(after.recovered), `Back on the shelf about 1 week sooner (8–12 days → 3–5 days), avoiding ~${pctTxt(M.depreciation)} weekly depreciation (1–3% range). ${LOCUS}`),
+      d: num(`+${money(preserved)}`, 'Value kept by selling items before they lose another week of value.', 'accent'),
+    },
+    {
+      label: 'Value wasted',
+      b: num(money(before.lost), 'Returned value that is never recovered: returned merchandise minus value recovered.'),
+      a: num(money(after.lost), 'Returned merchandise minus value recovered with faster, AI-routed decisions.'),
+      d: num(`−${money(preserved)}`, 'Less value thrown away.', 'accent'),
+    },
+    {
+      label: 'Processing cost',
+      b: num(money(before.proc), `Shipping, inspection, repackaging and restocking at ${pctTxt(M.procCost)} of item price (midpoint of 15–30%). ${LOCUS}`),
+      a: num(money(after.proc), `About ${pctTxt(M.procCut)} lower processing cost per unit with automated grading and routing. ${LOCUS}`),
+      d: num(`−${money(before.proc - after.proc)}`, 'Lower handling cost per returned item.', 'accent'),
+    },
+  ];
+  return `
+    <table class="cmp">
+      <caption class="sr-only">Returns cost for an online retailer with $1M in sales, before and after AI-driven decisions</caption>
+      <thead><tr><th scope="col">Per ${money(M.sales)} of online sales</th><th scope="col" class="r">Before: manual</th><th scope="col" class="r">After: AI decisions</th><th scope="col" class="r">Difference</th></tr></thead>
+      <tbody>
+        ${rows.map((r) => `<tr><th scope="row">${r.label}</th><td class="r" data-label="Before">${r.b}</td><td class="r" data-label="After">${r.a}</td><td class="r" data-label="Difference">${r.d}</td></tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row">Total lost on returns</th>
+          <td class="r" data-label="Before">${num(money(before.total), 'Value wasted + processing cost, before.')}</td>
+          <td class="r" data-label="After">${num(money(after.total), 'Value wasted + processing cost, after.')}</td>
+          <td class="r" data-label="Saved">${num(money(saved), `Saved per ${money(M.sales)} of online sales: ${pctTxt(saved / M.sales)} of revenue.`, 'accent big-save')}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function benchTable(num) {
+  const rows = [
+    ['Return-to-shelf time', num('8–12 days', `Manual processing. ${LOCUS}`), num('3–5 days', `AI-powered processing. ${LOCUS}`)],
+    ['Processing speed', '<span class="muted">Baseline</span>', num('50–60% faster', `Automated sorting and AI returns management. ${LOCUS}`)],
+    ['Labor cost', '<span class="muted">Baseline</span>', num('~30% lower', `Automated triage replaces manual inspection and sorting. ${LOCUS}`)],
+    ['Value recovered', num('~50%', `Of a product's worth. ${MCK50}`), '<span class="muted">Higher, as items resell before they depreciate</span>'],
+  ];
+  return `
+    <table class="cmp bench">
+      <caption class="sr-only">Manual versus AI-powered returns processing benchmarks</caption>
+      <thead><tr><th scope="col">Industry benchmark</th><th scope="col" class="r">Manual</th><th scope="col" class="r">AI-powered</th></tr></thead>
+      <tbody>${rows.map(([l, b, a]) => `<tr><th scope="row">${l}</th><td class="r" data-label="Manual">${b}</td><td class="r" data-label="AI-powered">${a}</td></tr>`).join('')}</tbody>
+    </table>`;
+}
 
 export function homeHTML({ num }) {
   const n = SLIDES.length;
@@ -85,7 +164,7 @@ export function homeHTML({ num }) {
       <div class="hero-panels">${panels}</div>
       <div class="hero-cta">
         <a class="btn primary" href="#assess">Assess your returns <span aria-hidden="true">→</span></a>
-        <a class="btn link" href="#problem">Why it matters</a>
+        <a class="btn link" href="#impact">See the savings</a>
       </div>
     </div>
     <div class="hero-foot">
@@ -97,40 +176,34 @@ export function homeHTML({ num }) {
 
   <section class="band" id="problem">
     <div class="wrap">
-      <p class="eyebrow">The returns problem</p>
-      <h2>Retail returns are a huge and costly problem.</h2>
-      <p class="helper">A large share of everything sold comes back, and online sales come back even more often.</p>
-      <div class="grid three stats">
-        <div class="card stat">${num('$849.9B', `Total US retail returns expected in 2025. Source: ${NRF}`, 'stat-num')}<p>in merchandise retailers expect to be returned in 2025</p></div>
-        <div class="card stat">${num('15.8%', `Share of annual retail sales expected to be returned in 2025. Source: ${NRF}`, 'stat-num')}<p>of annual sales coming back to the store</p></div>
-        <div class="card stat">${num('19.3%', `Share of online sales expected to be returned in 2025. Source: ${NRF}`, 'stat-num')}<p>of online sales returned, nearly one order in five</p></div>
+      <p class="eyebrow">The problem</p>
+      <h2>Returns cost more every year.</h2>
+      <p class="helper">US retail, 2025.</p>
+      <div class="grid four stats">
+        <div class="card stat">${num('$849.9B', `US retail returns expected in 2025. ${NRF}`, 'stat-num')}<p>returned to US retailers</p></div>
+        <div class="card stat">${num('15.8%', `Share of US retail sales expected to be returned in 2025. ${NRF}`, 'stat-num')}<p>of all retail sales</p></div>
+        <div class="card stat">${num('19.3%', `Share of online sales expected to be returned in 2025. ${NRF}`, 'stat-num')}<p>of online sales</p></div>
+        <div class="card stat">${num('~50%', `Share of a returned product's worth typically recovered. ${MCK50}`, 'stat-num')}<p>of the value recovered</p></div>
       </div>
     </div>
   </section>
 
-  <section class="band alt" id="difficulty">
+  <section class="band alt" id="impact">
     <div class="wrap">
-      <p class="eyebrow">The biggest difficulty</p>
-      <h2>Every return needs a decision, and most are made by guesswork.</h2>
-      <p class="helper">Once an item arrives, someone has to choose one of four routes. Each one earns a very different amount.</p>
-      <div class="grid four">
-        ${ROUTES.map(([h, p]) => `<div class="card route"><h3>${h}</h3><p>${p}</p></div>`).join('')}
-      </div>
-      <div class="card loss">
-        <div>${num('$200B', `Spent each year by retailers to recover value from returned goods. Source: ${MCK}`, 'stat-num')}
-          <p>spent by US retailers every year recovering value from returns</p></div>
-        <div class="loss-div" aria-hidden="true"></div>
-        <div>${num('~50%', `Share of a returned product's worth that is typically recovered. Source: ${MCK50}`, 'stat-num')}
-          <p>of a product's worth is all they get back on average</p></div>
-      </div>
+      <p class="eyebrow">Before and after</p>
+      <h2>What better decisions save.</h2>
+      <p class="helper">An online retailer with ${num(money(M.sales), 'Example size. The savings scale with sales.')} in sales, before and after AI grading and routing.</p>
+      <div class="card cmp-card">${moneyTable(num)}</div>
+      <div class="card cmp-card">${benchTable(num)}</div>
+      <p class="fine">Estimates built from published industry figures, not measured Reconomy results. Hover any number for its source.</p>
     </div>
   </section>
 
   <section class="band" id="how">
     <div class="wrap">
-      <p class="eyebrow">How Reconomy helps</p>
-      <h2>Better decisions can change this.</h2>
-      <p class="helper">Reconomy compares resell, refurbish, donate and scrap, and recommends the option with the highest profit.</p>
+      <p class="eyebrow">How it works</p>
+      <h2>Photos in. A priced plan out.</h2>
+      <p class="helper">Five steps, the same every time.</p>
       <ol class="flow">
         ${FLOW.map(([h, p], i) => `<li class="card flow-step"><span class="flow-n mono">0${i + 1}</span><h3>${h}</h3><p>${p}</p></li>`).join('')}
       </ol>
@@ -141,7 +214,7 @@ export function homeHTML({ num }) {
     <div class="wrap">
       <p class="eyebrow">Built on AWS</p>
       <h2>AWS enables scalable AI-powered inventory recovery.</h2>
-      <p class="helper">Each service does one job, so the same system works for one store or a whole network.</p>
+      <p class="helper">One service per job, from one store to many.</p>
       <div class="grid four">
         ${AWS.map(([h, p]) => `<div class="card aws-card"><h3>${h}</h3><p>${p}</p></div>`).join('')}
       </div>
@@ -152,7 +225,7 @@ export function homeHTML({ num }) {
     <div class="wrap cta-inner">
       <div>
         <h2>Stop guessing. Start recovering.</h2>
-        <p class="helper">Upload a few returns and see the most profitable route for each one.</p>
+        <p class="helper">Upload a few returns to see each item's best route.</p>
       </div>
       <a class="btn primary" href="#assess">Assess your returns <span aria-hidden="true">→</span></a>
     </div>
@@ -161,7 +234,7 @@ export function homeHTML({ num }) {
   <footer class="footer">
     <div class="wrap">
       <span>Reconomy · AI returns recovery</span>
-      <span>Sources: ${NRF} McKinsey reverse logistics research. Photos: Unsplash.</span>
+      <span>Sources: NRF and Happy Returns (2025), McKinsey, Locus. Photos: Unsplash.</span>
     </div>
   </footer>`;
 }
