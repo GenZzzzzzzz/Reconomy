@@ -6,6 +6,17 @@ and the money saved versus scrapping.
 
 **AWS enables scalable AI-powered inventory recovery.**
 
+## Pages
+
+- **Home** (`#`): full-screen hero carousel on the returns problem (5 slides, auto-advance with pause, keyboard
+  arrows, no motion with *reduced motion*), then problem stats, the four routes, the 5-step flow and AWS services.
+  Code: `home.js`. Photos in `assets/` are from Unsplash.
+- **Tool** (`#assess`): the 5-step flow Upload → Assess → Compare → Approve → Result.
+
+Statistics on the home page (each has an info tip with its source):
+NRF and Happy Returns, *2025 Retail Returns Landscape* (15.8% of sales, $849.9B, 19.3% online) and McKinsey
+reverse logistics research ($200B spent recovering value; ~50% of worth recovered, as cited by GSPANN).
+
 ## Architecture
 
 ```
