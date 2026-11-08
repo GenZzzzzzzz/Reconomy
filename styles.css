@@ -383,3 +383,21 @@ body.is-home main { max-width: none; padding: 0; }
 .stat { position: relative; }
 .stat .tip { position: static; }
 .stat .tip .bubble { left: 12px; right: 12px; width: auto; bottom: calc(100% - 12px); }
+
+/* ---- before/after emphasis ---- */
+.num.bad, .cmp td .num.bad { color: #f87171; }
+.lb { margin-bottom: 16px; }
+.lb .card { padding: 24px 28px; }
+.lb-row { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 16px; margin-top: 18px; }
+.lb-label { color: var(--muted); font-size: 14px; }
+.lb-track { height: 14px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--line); overflow: hidden; }
+.lb-fill { display: block; height: 100%; border-radius: 999px; }
+.lb-fill.bad { background: linear-gradient(90deg, #b91c1c, #f87171); }
+.lb-fill.good { background: linear-gradient(90deg, #0e7490, #22d3ee); }
+.lb-val { font-size: 22px; font-weight: 600; }
+.lb-scale { display: flex; flex-direction: column; justify-content: center; }
+.lb-scale p { color: var(--muted); margin: 6px 0 0; font-size: 15px; }
+.lb-scale .huge { font-size: clamp(44px, 5vw, 64px); }
+.lb-scale { position: relative; }
+.lb-scale .tip { position: static; }
+.lb-scale .tip .bubble { left: 12px; right: 12px; width: auto; bottom: calc(100% - 12px); }
