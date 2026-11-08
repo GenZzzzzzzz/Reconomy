@@ -4,23 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reconomy · AI returns recovery</title>
+  <meta name="description" content="Reconomy uses AI to decide whether each returned item should be resold, refurbished, donated or scrapped, and shows the money it recovers.">
   <link rel="icon" type="image/svg+xml" href="logo.svg">
+  <link rel="preload" as="image" href="assets/hero-1.jpg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="top">
-    <div class="bar">
-      <a class="brand" href="/" aria-label="Reconomy home">
-        <img class="logo" src="logo.svg" alt="" width="44" height="44">
-        <span class="wordmark">Re<span>conomy</span></span>
+  <a class="skip" href="#app">Skip to content</a>
+  <header class="topnav" id="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="#" aria-label="Reconomy home">
+        <img class="logo" src="logo.svg" alt="" width="40" height="40">
+        <span class="brand-text">
+          <span class="wordmark">RE<span>CONOMY</span></span>
+          <span class="brand-sub">AI returns recovery</span>
+        </span>
       </a>
-      <span id="mode" class="mode"></span>
+      <nav class="navlinks" aria-label="Main">
+        <a href="#problem">The problem</a>
+        <a href="#how">How it works</a>
+        <a href="#aws">Built on AWS</a>
+      </nav>
+      <div class="nav-right">
+        <span id="mode" class="mode"></span>
+        <a class="btn primary small" href="#assess" id="nav-cta">Assess returns</a>
+      </div>
     </div>
-    <nav aria-label="Progress"><ol id="steps" class="steps"></ol></nav>
   </header>
+  <div class="stepbar" id="stepbar"><nav aria-label="Progress"><ol id="steps" class="steps"></ol></nav></div>
   <main id="app" tabindex="-1"></main>
   <script type="module" src="app.js"></script>
 </body>

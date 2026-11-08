@@ -59,6 +59,8 @@ STATIC = {
     "/logic.js": ("logic.js", "text/javascript; charset=utf-8"),
     "/config.js": ("config.js", "text/javascript; charset=utf-8"),
     "/logo.svg": ("logo.svg", "image/svg+xml"),
+    "/home.js": ("home.js", "text/javascript; charset=utf-8"),
+    **{f"/assets/hero-{i}.jpg": (f"assets/hero-{i}.jpg", "image/jpeg") for i in range(1, 6)},
 }
 
 client = boto3.client(
