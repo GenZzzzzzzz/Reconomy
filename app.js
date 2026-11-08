@@ -128,10 +128,10 @@ function screenUpload() {
       <aside class="card up-side" aria-labelledby="algo-h">
         <h2 class="side-h" id="algo-h">How Reconomy decides</h2>
         <ol class="algo">
-          <li><b>Identify</b><span>AI names, grades and prices each item. A catalog price is used when the item is in your catalog.</span></li>
-          <li><b>Score every route</b><span>Resell, refurbish, donate and scrap are each priced by net recovery value: expected sale minus fees, handling, repair and value lost while waiting.</span></li>
-          <li><b>Bundle low-value items</b><span>Cheap items in the same category are sold as one lot when that brings back more.</span></li>
-          <li><b>Pick the best</b><span>The highest net recovery value wins. A greener option that costs almost nothing extra is flagged.</span></li>
+          <li><b>Identify</b><span>AI reads the photos to name each item, grade its condition and spot defects, then sets its price from your catalog or today's street price. Every later number depends on this, so uncertain prices are kept on the low side.</span></li>
+          <li><b>Score every route</b><span>Resell, refurbish, donate and scrap each get a net recovery value: the expected sale minus fees, handling, repair and the value lost while the item waits. One measure for every route makes them directly comparable.</span></li>
+          <li><b>Bundle low-value items</b><span>Cheap items in the same category are grouped into one lot that shares a single listing and shipment. Alone, handling would eat most of their value; together, they earn money instead of being scrapped.</span></li>
+          <li><b>Pick the best</b><span>The route with the highest net recovery value is recommended, and a greener route that costs almost nothing extra is pointed out. Profit comes first, with less waste where it is nearly free.</span></li>
         </ol>
       </aside>
     </div>
