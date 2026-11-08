@@ -128,10 +128,10 @@ function screenUpload() {
       <aside class="card up-side" aria-labelledby="algo-h">
         <h2 class="side-h" id="algo-h">How Reconomy decides</h2>
         <ol class="algo">
-          <li><b>Identify</b><span>AI reads the photos to name each item, grade its condition and spot defects, then sets its price from your catalog or today's street price. Every later number depends on this, so uncertain prices are kept on the low side.</span></li>
-          <li><b>Score every route</b><span>Resell, refurbish, donate and scrap each get a net recovery value: the expected sale minus fees, handling, repair and the value lost while the item waits. One measure for every route makes them directly comparable.</span></li>
-          <li><b>Bundle low-value items</b><span>Cheap items in the same category are grouped into one lot that shares a single listing and shipment. Alone, handling would eat most of their value; together, they earn money instead of being scrapped.</span></li>
-          <li><b>Pick the best</b><span>The route with the highest net recovery value is recommended, and a greener route that costs almost nothing extra is pointed out. Profit comes first, with less waste where it is nearly free.</span></li>
+          <li><b>Look at each item</b><span>AI checks your photos to see what each item is and what shape it is in. Then it finds what the item sells for today, playing it safe when unsure.</span></li>
+          <li><b>Count the money for each option</b><span>For resell, refurbish, donate and scrap, we work out the money you keep after all costs, like fees, shipping, repairs and value lost while it waits. That way every option is compared fairly.</span></li>
+          <li><b>Group cheap items</b><span>Some items cost more to sell one by one than they are worth. So similar cheap items are sold together as one bundle that shares the costs.</span></li>
+          <li><b>Pick the winner</b><span>The option that keeps the most money is recommended. If a greener option earns almost the same, we point it out too.</span></li>
         </ol>
       </aside>
     </div>
