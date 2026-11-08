@@ -125,18 +125,13 @@ function screenUpload() {
         ${state.images.length ? `<div class="ph-grid">${thumbs}</div>` : ''}
         <div class="error" role="alert">${esc(state.error)}</div>
       </div>
-      <aside class="card up-side">
-        <h2 class="side-h">For the best result</h2>
-        <ul class="checks">
-          <li>${ICON.check}<span>One product per photo, or several angles of the same one.</span></li>
-          <li>${ICON.check}<span>Good light, with any damage close up.</span></li>
-          <li>${ICON.check}<span>Show the box or tags if the item has them.</span></li>
-        </ul>
-        <h2 class="side-h">What happens next</h2>
-        <ol class="mini-flow">
-          <li><b>${isReal ? 'Amazon Bedrock' : 'Simulated AI'}</b> identifies and grades each item.</li>
-          ${mode === 'local' ? '<li><b>AWS Lambda</b> prices it from your catalog in <b>Amazon S3</b>.</li>' : ''}
-          <li><b>Reconomy</b> prices all four routes and picks the best.</li>
+      <aside class="card up-side" aria-labelledby="algo-h">
+        <h2 class="side-h" id="algo-h">How Reconomy decides</h2>
+        <ol class="algo">
+          <li><b>Identify</b><span>AI names, grades and prices each item. A catalog price is used when the item is in your catalog.</span></li>
+          <li><b>Score every route</b><span>Resell, refurbish, donate and scrap are each priced by net recovery value: expected sale minus fees, handling, repair and value lost while waiting.</span></li>
+          <li><b>Bundle low-value items</b><span>Cheap items in the same category are sold as one lot when that brings back more.</span></li>
+          <li><b>Pick the best</b><span>The highest net recovery value wins. A greener option that costs almost nothing extra is flagged.</span></li>
         </ol>
       </aside>
     </div>

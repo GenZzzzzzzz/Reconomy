@@ -823,3 +823,11 @@ button.primary:disabled { opacity: .4; box-shadow: none; }
 .leaf { font-size: 14px; }
 .seg-ctl span { padding: 7px 11px; }
 .cx-explain { margin: 10px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: #c6cfd9; font-size: 14.5px; line-height: 1.55; }
+
+/* upload side panel: algorithm summary */
+.algo { list-style: none; counter-reset: algo; margin: 0; padding: 0; display: grid; gap: 16px; }
+.algo li { counter-increment: algo; display: grid; grid-template-columns: 28px 1fr; column-gap: 12px; row-gap: 3px; }
+.algo li::before { content: counter(algo); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font: 600 12px var(--mono); color: var(--cyan); border: 1px solid rgba(42, 212, 236, .35); background: rgba(42, 212, 236, .08); }
+.algo b { font-size: 14px; color: var(--text); }
+.algo span { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
