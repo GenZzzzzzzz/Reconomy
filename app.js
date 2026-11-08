@@ -189,9 +189,13 @@ function priceTile(it) {
       <span class="tile-sub">AI guessed ${num(usd(it.aiEstimatedPrice), 'The AI estimate from the photo. Replaced by the catalog price.')}</span></div>`;
   }
   const why = it.matchNote ? ` Not in catalog: ${it.matchNote}` : '';
+  const basis = it.priceBasis ? ` ${it.priceBasis}` : '';
+  const range = it.priceLow !== null && it.priceHigh !== null && it.priceLow !== undefined
+    ? `Street ${num(usd(it.priceLow), 'Lowest common street price at mainstream US retailers.')} – ${num(usd(it.priceHigh), 'Highest common street price at mainstream US retailers.')}`
+    : 'Not found in the catalog';
   return `<div class="tile"><span class="label">Original price <span class="src">AI estimate</span></span>
-    ${num(usd(it.estimatedOriginalPrice), `AI estimate of the new retail price, based on the photos.${why}`, 'tile-v')}
-    <span class="tile-sub">Not found in the catalog</span></div>`;
+    ${num(usd(it.estimatedOriginalPrice), `Typical street price a shopper pays today, estimated by the AI. Not the launch price.${basis}${why}`, 'tile-v')}
+    <span class="tile-sub">${range}</span></div>`;
 }
 
 function assessDetail(it) {

@@ -93,6 +93,18 @@ export const API_BASE = 'https://xxxx.execute-api.us-east-1.amazonaws.com';
 The badge in the header switches to "Live · AWS". To use a different model, pass
 `--parameter-overrides ModelId=<model or inference profile id>`. For production, set `AllowedOrigin` to your site's URL.
 
+## How the original price is set
+
+1. **Catalog price** (most objective): if AWS Lambda matches the item to `data/catalog.csv` in S3, that price
+   is used. Model numbers and generations must match exactly ("AirPods Pro 1st gen" never takes the 2nd-gen price).
+2. **AI street price** otherwise: Bedrock returns `priceLow` / `priceTypical` / `priceHigh` and a `priceBasis`.
+   It prices what a US shopper actually pays today at mainstream retailers, never the launch MSRP; discontinued
+   models are priced at today's clearance or renewed price; unclear brands are priced as the generic product; when
+   unsure it picks the lower figure. The app uses the typical price, kept inside the range (`streetPrice` in `logic.js`).
+
+The model has no live web access, so AI prices reflect its training data. Put real prices in the catalog for anything
+that matters. The sample catalog uses approximate current street prices, not verified quotes.
+
 ## Store data in Amazon S3 + AWS Lambda (real prices and rates)
 
 After Bedrock identifies the items, the server invokes the Lambda **`reconomy-catalog`**

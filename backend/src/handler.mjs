@@ -98,11 +98,22 @@ Rules:
 - Be specific: brand, model and colour when you can see or reliably recognise them. Do not guess a model you cannot tell.
 - Grade only what is visible. A clean product with no visible wear is condition A.
   Add a defect only if you can actually see it in the photo; if unsure, leave defects empty.
+- Price like a market analyst, not a sticker. The price is what a US shopper actually paid for this item
+  new in the last 12 months at mainstream retailers (Amazon, Walmart, Target, Best Buy, the brand store),
+  including the usual discounts. Never use the launch price or original MSRP of an older model.
+- If the model is no longer sold new, price it at what it sells for today at mainstream retailers
+  (clearance, outlet or certified renewed), not what it cost when it launched.
+- Price a specific model only when brand and model are visible or certain. Otherwise price the generic
+  product type at a mid-market retailer, and do not assume a premium brand.
+- When unsure, pick the lower plausible figure: an overestimate inflates every recovery decision.
 Return ONLY a JSON array, no prose, no markdown. One object per product:
 {
  "name": short product name (e.g. "Sony WH-1000XM4 headphones"),
  "category": one of ${JSON.stringify(Object.keys(CATEGORIES))},
- "estimatedOriginalPrice": typical new retail price in USD as a number,
+ "priceLow": lowest common street price in USD (number),
+ "priceTypical": most common street price in USD (number, between priceLow and priceHigh),
+ "priceHigh": highest common street price in USD (number),
+ "priceBasis": one short sentence on what the price is based on (model year, discontinued or not, where it sells),
  "condition": one of ${JSON.stringify(Object.keys(CONDITIONS))} (A like new, B good, C fair, D poor),
  "defects": array using only ${JSON.stringify(Object.keys(DEFECTS))} (use "functional" only for visible breakage that stops it working),
  "hasPackaging": true if original packaging is visible,

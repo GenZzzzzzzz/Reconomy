@@ -1,5 +1,5 @@
 {
-  "_note": "SAMPLE business rates. Replace with your store's real numbers and re-run scripts/setup_aws.py.",
+  "_note": "SAMPLE business rates. Replace with your store's real numbers and re-run scripts/setup_aws.py --data-only.",
   "version": "sample-2026-11",
   "feeRate": 0.12,
   "handling": 5,
@@ -8,13 +8,47 @@
   "refurbValueFactor": 0.92,
   "noPackagingFactor": 0.92,
   "categories": {
-    "electronics": { "retention": 0.55, "salvage": 0.08, "disposal": 6 },
-    "apparel":     { "retention": 0.40, "salvage": 0.02, "disposal": 1 },
-    "furniture":   { "retention": 0.45, "salvage": 0.05, "disposal": 15 },
-    "appliances":  { "retention": 0.50, "salvage": 0.10, "disposal": 12 },
-    "toys":        { "retention": 0.45, "salvage": 0.02, "disposal": 1 },
-    "other":       { "retention": 0.35, "salvage": 0.03, "disposal": 4 }
+    "electronics": {
+      "retention": 0.55,
+      "salvage": 0.08,
+      "disposal": 6
+    },
+    "apparel": {
+      "retention": 0.4,
+      "salvage": 0.02,
+      "disposal": 1
+    },
+    "furniture": {
+      "retention": 0.45,
+      "salvage": 0.05,
+      "disposal": 15
+    },
+    "appliances": {
+      "retention": 0.5,
+      "salvage": 0.1,
+      "disposal": 12
+    },
+    "toys": {
+      "retention": 0.45,
+      "salvage": 0.02,
+      "disposal": 1
+    },
+    "other": {
+      "retention": 0.35,
+      "salvage": 0.03,
+      "disposal": 4
+    }
   },
-  "conditions": { "A": 0.95, "B": 0.80, "C": 0.55, "D": 0.25 },
-  "defects": { "cosmetic": 0.06, "functional": 0.18, "missing": 0.10, "hygiene": 0.03 }
+  "conditions": {
+    "A": 0.95,
+    "B": 0.8,
+    "C": 0.55,
+    "D": 0.25
+  },
+  "defects": {
+    "cosmetic": 0.06,
+    "functional": 0.18,
+    "missing": 0.1,
+    "hygiene": 0.03
+  }
 }

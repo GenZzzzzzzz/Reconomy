@@ -82,9 +82,14 @@ def match(item, catalog, brands):
 
     brand_words = set().union(*(set(b.split()) for b in named_brands)) if named_brands else set()
     specific = words - GENERIC - brand_words
+    # Model numbers and generations ("11", "1st", "xm4") must match exactly; a wrong one means a different price.
+    # Release years ("2017") are descriptive, not part of the model, so they are ignored here.
+    model_tokens = {t for t in specific if re.search(r"\d", t) and not re.fullmatch(r"(19|20)\d\d", t)}
 
     scored = []
     for r in candidates:
+        if model_tokens - r["all"]:
+            continue
         if specific:
             hit = len(specific & r["all"])
             ai_cov = hit / len(specific)

@@ -65,18 +65,39 @@ export function applyRates(r, source = 'S3 rates.json') {
 }
 export const usd = (n) => (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
 
+const clampPrice = (n) => Math.min(Math.max(n, 1), 20000);
+const finite = (v) => (typeof v === 'number' || typeof v === 'string') && v !== '' && Number.isFinite(Number(v));
+
+// Original price = the typical street price the AI reports, kept inside its own low-high range.
+// Falls back to the older single estimatedOriginalPrice field (demo mode, old responses).
+function streetPrice(r) {
+  let low = finite(r.priceLow) ? clampPrice(Number(r.priceLow)) : null;
+  let high = finite(r.priceHigh) ? clampPrice(Number(r.priceHigh)) : null;
+  if (low !== null && high !== null && low > high) [low, high] = [high, low];
+  let price = finite(r.priceTypical) ? Number(r.priceTypical)
+    : low !== null && high !== null ? (low + high) / 2
+    : finite(r.estimatedOriginalPrice) ? Number(r.estimatedOriginalPrice) : 30;
+  price = clampPrice(price);
+  if (low !== null) price = Math.max(price, low);
+  if (high !== null) price = Math.min(price, high);
+  return { price: Math.round(price * 100) / 100, low, high };
+}
+
 // Cleans one item coming from the AI model so bad output cannot break the math.
 export function normalizeItem(raw, imageCount = 1) {
   const r = raw && typeof raw === 'object' ? raw : {};
-  const price = Number(r.estimatedOriginalPrice);
   const conf = Number(r.confidence);
+  const p = streetPrice(r);
   const idx = Array.isArray(r.imageIndexes)
     ? [...new Set(r.imageIndexes.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < imageCount))]
     : [];
   return {
     name: String(r.name || 'Unidentified item').slice(0, 80),
     category: CATEGORIES[r.category] ? r.category : 'other',
-    estimatedOriginalPrice: Number.isFinite(price) ? Math.min(Math.max(price, 1), 20000) : 30,
+    estimatedOriginalPrice: p.price,
+    priceLow: p.low,
+    priceHigh: p.high,
+    priceBasis: String(r.priceBasis || '').slice(0, 200),
     condition: CONDITIONS[r.condition] ? r.condition : 'C',
     defects: Array.isArray(r.defects) ? [...new Set(r.defects.filter((d) => DEFECTS[d]))] : [],
     hasPackaging: r.hasPackaging === true,
