@@ -111,6 +111,11 @@ price, or the certified-renewed price once the product is no longer sold new.
    `priceBasis` names the product priced and says new or renewed. The AI writes `priceBasis` before the number, so
    the number follows from the named product.
 
+**Price panel (local server):** after identification, three models (`PRICE_MODEL_IDS`, default Claude Opus 4.8,
+Claude Opus 5 and GPT-5.5) each price the identified products in a separate text-only call. The median of their
+answers and the vision model's own estimate becomes the original price. If they disagree by more than 40%, price
+confidence is lowered so the item is flagged for review. This adds about 7 seconds per analysis.
+
 The price is used as-is. Identity, condition and price confidence never change it; a low confidence adds an amber
 review flag instead. Used value = original price × the category's used-market share × the condition-grade factor
 (× 0.92 when the original packaging is visibly missing).

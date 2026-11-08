@@ -11,6 +11,8 @@ Routes:
 Run:  .venv/bin/python server/app.py   then open http://localhost:8000
 """
 import base64
+import concurrent.futures
+import statistics
 import json
 import os
 import re
@@ -36,6 +38,9 @@ REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 # Inference profile ID (requires the us. prefix). Must accept image input.
 # Claude Opus 4.8 won our accuracy benchmark (see README).
 MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-opus-4-8")
+# Independent price panel. Each model prices the identified products; the median is used.
+PRICE_MODELS = [m.strip() for m in os.getenv(
+    "PRICE_MODEL_IDS", "us.anthropic.claude-opus-4-8,us.anthropic.claude-opus-5,us.openai.gpt-5.5").split(",") if m.strip()]
 PORT = int(os.getenv("PORT", "8000"))
 # Lambda that matches AI-identified items to the store catalog in S3 (created by scripts/setup_aws.py).
 CATALOG_FUNCTION = os.getenv("CATALOG_FUNCTION", "reconomy-catalog")
@@ -115,11 +120,11 @@ def catalog_lookup(items):
 
 
 # ---------- Bedrock ----------
-def converse(content, max_tokens):
+def converse(content, max_tokens, model_id=None):
     """One Converse call. Returns the model's text (skips reasoningContent blocks)."""
     # No temperature/topP: newer Claude and GPT models on Bedrock reject those fields.
     response = client.converse(
-        modelId=MODEL_ID,
+        modelId=model_id or MODEL_ID,
         messages=[{"role": "user", "content": content}],
         inferenceConfig={"maxTokens": max_tokens},
     )
@@ -195,6 +200,49 @@ Return ONLY a JSON array, no prose, no markdown. One object per product:
  "imageIndexes": zero-based indexes of photos showing this product
 }}
 If a photo shows no product, leave it out. If nothing is a product, return []."""
+
+
+PRICE_PROMPT = """You are a US retail pricing analyst. For each product below, give the MEDIAN price a US shopper pays for it today
+across mainstream retailers (Amazon, Walmart, Target, Best Buy, the brand's own store), including normal everyday discounts.
+- Still sold new: the median new price. No longer sold new: the median certified-renewed price, often far below launch price.
+- Never a launch MSRP, a collector or resale price, or a used price. Do not round up.
+- A generic product: the median entry-level to mid-range product of that type; never a premium brand.
+Return ONLY a JSON array of numbers in USD, one per product, same order, no prose.
+Products:
+"""
+
+
+def _panel_prices(model_id, lines):
+    try:
+        out = parse_json(converse([{"text": PRICE_PROMPT + lines}], 3000, model_id))
+        return out if isinstance(out, list) else None
+    except Exception as e:
+        print(f"price: {model_id} failed: {type(e).__name__}", file=sys.stderr)
+        return None
+
+
+def price_items(items):
+    """Re-price identified items with an independent model panel and use the median. Keeps the vision price on failure."""
+    if not items or not PRICE_MODELS:
+        return items
+    lines = "\n".join(
+        f"{i + 1}. {x.get('priceBasis') or x.get('name') or x.get('productType')} "
+        f"(type: {x.get('productType')}; visible text: {', '.join(map(str, x.get('observedText') or [])) or 'none'})"
+        for i, x in enumerate(items))
+    with concurrent.futures.ThreadPoolExecutor(len(PRICE_MODELS)) as pool:
+        answers = [a for a in pool.map(lambda m: _panel_prices(m, lines), PRICE_MODELS) if a and len(a) == len(items)]
+    for i, x in enumerate(items):
+        votes = [float(a[i]) for a in answers if isinstance(a[i], (int, float)) and 0 < a[i] < 100000]
+        if isinstance(x.get("retailPriceToday"), (int, float)) and x["retailPriceToday"] > 0:
+            votes.append(float(x["retailPriceToday"]))  # the vision model's own estimate is one vote
+        if len(votes) >= 2:
+            x["retailPriceToday"] = round(statistics.median(votes), 2)
+            spread = (max(votes) - min(votes)) / max(statistics.median(votes), 1)
+            if spread > 0.4:  # the panel disagrees: lower confidence so the item is flagged for review
+                x["priceConfidence"] = min(float(x.get("priceConfidence") or 0.5), 0.4)
+    print(f"price: panel {len(answers)}/{len(PRICE_MODELS)} answered; prices "
+          + ", ".join(str(x.get("retailPriceToday")) for x in items), file=sys.stderr)
+    return items
 
 
 def analyze(images_b64):
@@ -314,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise BadRequest("Body must be a JSON object.")
             if self.path == "/api/analyze":
-                items = analyze(body.get("images"))
+                items = price_items(analyze(body.get("images")))
                 catalog = catalog_lookup(items) if items else None
                 return self.send_json(200, {"items": items, "model": MODEL_ID, "catalog": catalog})
             if self.path == "/api/convert":
