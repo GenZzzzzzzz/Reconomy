@@ -88,8 +88,8 @@ async function analyzeRoute(body) {
       id, createdAt: new Date().toISOString(), status: 'analyzed', modelId: MODEL_ID, imageKeys: keys,
       items: items.map((it) => ({
         name: it.name, brand: it.brand, model: it.model, observedText: it.observedText,
-        category: it.category, estimatedOriginalPrice: it.estimatedOriginalPrice,
-        priceLow: it.priceLow, priceHigh: it.priceHigh, priceType: it.priceType,
+        category: it.category, originalPrice: it.estimatedOriginalPrice, priceSource: it.priceSource, sku: it.sku,
+        priceBasis: it.priceBasis,
         identityConfidence: it.identityConfidence, conditionConfidence: it.conditionConfidence, priceConfidence: it.priceConfidence,
         condition: it.condition, defects: it.defects, repairability: it.repairability, packagingStatus: it.packagingStatus, hasPackaging: it.hasPackaging,
         imageIndexes: it.imageIndexes, recommended: it.decision.best, savings: it.decision.savings,
@@ -119,11 +119,11 @@ async function catalogLookup(rawItems) {
     return { ok: true, function: CATALOG_FUNCTION, ...body };
   } catch (error) {
     console.error('catalog lookup failed', error);
-    return { ok: false, function: CATALOG_FUNCTION, error: 'Catalog lookup unavailable; using conservative AI market estimates.' };
+    return { ok: false, function: CATALOG_FUNCTION, error: 'Catalog lookup unavailable; using AI price estimates.' };
   }
 }
 
-const VISION_PROMPT = `You are a conservative returns inspector for a retail store. The photos above show returned products.
+const VISION_PROMPT = `You are a careful returns inspector for a retail store. The photos above show returned products.
 Your job is to report only what the photos support. Accuracy matters more than a detailed guess.
 
 Rules:
@@ -133,12 +133,21 @@ Rules:
   observedText must contain literal visible text or logos only, never a condition statement such as "no visible defects".
 - Only give a brand or model when visible text or an unmistakable logo supports it. Do not infer a specific model from colour or shape.
   If the exact model is unclear, name the generic product type, set brand and model to null, and lower identityConfidence.
-- Grade only visible condition. Do not call normal shadows, reflections or studio backgrounds damage.
-  List a defect only when it is visible. If the photo cannot prove condition, use C and lower conditionConfidence.
-- priceLow, priceTypical and priceHigh estimate the CURRENT US market price, not launch MSRP. Use current mainstream street price for a new item,
-  or current renewed/open-box market price for discontinued items. If identity is unclear, use a broad generic-product range and lower priceConfidence.
+- Grade the condition you can see: A = no visible wear, B = light wear, C = clear wear, marks or stains, D = heavy damage.
+  If some sides are not visible, grade what you can see and lower conditionConfidence; do not lower the grade for that.
+  Shadows, reflections, studio backgrounds and screen glare are not damage. List a defect only when you can see it.
+- retailPriceToday is what a US shopper pays for this product today at mainstream retailers (Amazon, Walmart, Target, Best Buy
+  or the brand's own store), including normal everyday discounts. Use the new price while the product is still sold new. If it is
+  no longer sold new, use today's certified-renewed price, which is often far below the launch price.
+  Never use a launch MSRP, an old price or a used price.
+  Price the actual product in the photos. If no model text is visible but the design is distinctive enough that a product expert
+  would recognise the product line and generation, price that product as the closest visual match. If several generations share
+  the design, price the one the visible details fit best; if they fit equally, price the older one.
+  Only for a generic design, price the most common mid-range product of that type; never assume a premium brand for a generic design.
+  In priceBasis, name the product you priced, say "new" or "renewed", and add "closest visual match" when no model text is visible.
+  This price rule does not relax the naming rules: name, brand and model stay limited to visible evidence.
 - Never name a model from a visual silhouette alone. A specific generation or model must be present in observedText; otherwise use productType only and lower identityConfidence.
-- Do not manufacture a premium brand, packaging, a working condition, or a precise price.
+- Do not invent a brand, a model number, packaging or a working condition.
 - Set bundleKey only when this item can sensibly be sold with OTHER matching items as one consumer-facing lot (examples: identical shirts,
   USB-C cables, phone cases). Use a short normalized type such as "usb-c-cable". Otherwise return null; never use a broad category like "apparel".
 - Set repairability only for a functional fault: "repairable", "unknown", or "not_repairable". Use "unknown" when a photo cannot establish repair success.
@@ -152,14 +161,11 @@ Return ONLY a JSON array, no prose, no markdown. One object per product:
  "observedText": array of text or labels visibly read from the photos,
  "category": one of ${JSON.stringify(Object.keys(CATEGORIES))},
  "bundleKey": compatible product type string or null,
- "priceType": one of ["new_street", "current_market", "renewed_market", "unknown"],
- "priceLow": low current market price in USD (number),
- "priceTypical": typical current market price in USD (number, between priceLow and priceHigh),
- "priceHigh": high current market price in USD (number),
- "priceBasis": one short sentence explaining the price type and evidence,
+ "priceBasis": one short sentence naming the product you priced and whether the price is new or renewed,
+ "retailPriceToday": USD a shopper pays for that product at retail today, new or certified renewed (number),
  "identityConfidence": confidence in the exact identity, 0 to 1,
  "conditionConfidence": confidence in the condition grade, 0 to 1,
- "priceConfidence": confidence in the price range, 0 to 1,
+ "priceConfidence": confidence in retailPriceToday, 0 to 1,
  "condition": one of ${JSON.stringify(Object.keys(CONDITIONS))} (A like new, B good, C fair, D poor),
  "defects": array using only ${JSON.stringify(Object.keys(DEFECTS))},
  "repairability": "repairable", "unknown", "not_repairable", or null,
@@ -185,8 +191,8 @@ async function identifyItems(buffers) {
 async function explain(items) {
   const facts = items.map((it, i) => ({
     index: i, name: it.name, category: it.category, condition: it.condition, defects: it.defects,
-    priceSource: it.priceSource === 'catalog' ? `verified store catalog (${it.sku})` : 'conservative AI market estimate',
-    referencePrice: it.estimatedOriginalPrice, priceType: it.priceType,
+    priceSource: it.priceSource === 'catalog' ? `store catalog (${it.sku})` : 'AI estimate',
+    originalPrice: it.estimatedOriginalPrice,
     identityConfidence: it.identityConfidence, conditionConfidence: it.conditionConfidence, priceConfidence: it.priceConfidence,
     assessmentNeedsReview: it.decision.needsReview, reviewReasons: it.decision.reviewReasons,
     recommended: it.decision.best, savedVersusScrap: it.decision.savings,
@@ -196,7 +202,7 @@ async function explain(items) {
     greenerOption: it.decision.greener ? { route: it.decision.greener.route, costsLess: it.decision.greener.gap } : null,
   }));
   const prompt = `For each returned item below, write 2 short sentences for a store manager explaining why the recommended route brings back the most money (net recovery value). If it is a bundle, say it is sold as a lot with other items. If a greener option is given, mention it in a few words. If assessmentNeedsReview is true, say the plan should be checked before routing.
-Use the exact dollar figures given. Mention the money saved versus scrapping. Do not invent numbers.
+Use the exact dollar figures given. Mention the money saved versus scrapping. Do not invent numbers. Write plain language and never mention field names.
 Return ONLY a JSON array of strings, in the same order.
 ${JSON.stringify(facts)}`;
   const parsed = parseJson(await converse([{ text: prompt }], 1200));

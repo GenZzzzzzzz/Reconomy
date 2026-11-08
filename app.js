@@ -131,10 +131,10 @@ function screenUpload() {
       <aside class="card up-side" aria-labelledby="algo-h">
         <h2 class="side-h" id="algo-h">How Reconomy decides</h2>
         <ol class="algo">
-          <li><b>Check the evidence</b><span>AI uses only details visible in the photos. It uses a verified catalog match when it has one; otherwise it keeps the price range cautious and flags weak evidence.</span></li>
+          <li><b>Check the evidence</b><span>AI identifies each item from what the photos show, grades its condition and estimates its original price: what a shopper pays for it at retail today (new, or certified renewed if it is no longer sold new). If the item is in your catalog, your catalog price is used instead.</span></li>
           <li><b>Estimate each outcome</b><span>For every route, it estimates what will sell, then subtracts fees, handling, repairs and the value lost while the item waits. This gives each choice one fair number to compare.</span></li>
           <li><b>Bundle only true matches</b><span>Low-value items are bundled only when they are the same compatible type, such as cables or matching shirts. The bundle is used only when it earns more than selling the items separately.</span></li>
-          <li><b>Recommend or flag</b><span>The highest cautious recovery value wins. Close calls, unclear items and risky repairs are marked for review; a greener near-equal route is shown too.</span></li>
+          <li><b>Recommend or flag</b><span>The highest net recovery value wins. Close calls, unclear items and risky repairs are marked for review; a greener near-equal route is shown too.</span></li>
         </ol>
       </aside>
     </div>
@@ -170,7 +170,7 @@ function catalogBanner() {
   if (!c.ok) return `<div class="banner warn" role="status">${esc(c.error)} Run <span class="mono">scripts/setup_aws.py</span> to enable it.</div>`;
   const hits = state.items.filter((x) => x.priceSource === 'catalog').length;
   return `<div class="banner" role="status"><span class="dot"></span>AWS Lambda matched
-    ${num(`${hits}/${state.items.length}`, 'Items found in your product catalog. Verified items use the catalog\'s current reference price; weak matches keep an AI market range.')}
+    ${num(`${hits}/${state.items.length}`, 'Items matched to your product catalog. They use your catalog price instead of the AI estimate.')}
     items to ${num(c.size, 'Products in catalog.csv in Amazon S3.')} catalog products in Amazon S3.</div>`;
 }
 
@@ -180,12 +180,6 @@ function gradeMeter(cond) {
   </div>`;
 }
 
-const PRICE_TYPE_LABEL = {
-  new_street: 'new street price',
-  current_market: 'current market price',
-  renewed_market: 'renewed market price',
-  unknown: 'market estimate',
-};
 const packagingLabel = (item) => ({
   included: 'Packaging visible',
   missing: 'Packaging missing',
@@ -193,21 +187,15 @@ const packagingLabel = (item) => ({
 }[item.packagingStatus] || 'Packaging not shown');
 
 function priceTile(it) {
-  const type = PRICE_TYPE_LABEL[it.priceType] || 'market estimate';
   if (it.priceSource === 'catalog') {
     const checked = it.priceCheckedAt ? ` Last checked ${it.priceCheckedAt}.` : '';
-    return `<div class="tile"><span class="label">Reference price <span class="src ok">Verified catalog · ${esc(it.sku)}</span></span>
-      ${num(usd(it.estimatedOriginalPrice), `${type} for "${it.catalogName}" from your catalog in Amazon S3, verified by AWS Lambda.${checked} ${it.priceBasis}`, 'tile-v')}
-      <span class="tile-sub">AI estimate ${num(usd(it.aiEstimatedPrice), 'The AI range estimate is not used because a verified catalog value is available.')} · match ${num(pct(it.catalogMatchScore || 1), 'How much of the visible identity matched this catalog row.')}</span></div>`;
+    return `<div class="tile"><span class="label">Original price <span class="src ok">Catalog · ${esc(it.sku)}</span></span>
+      ${num(usd(it.estimatedOriginalPrice), `Price of "${it.catalogName}" from your catalog in Amazon S3, matched by AWS Lambda.${checked}`, 'tile-v')}
+      <span class="tile-sub">AI estimated ${num(usd(it.aiEstimatedPrice), 'The AI estimate from the photo. Your catalog price is used instead.')}</span></div>`;
   }
-  const range = it.priceLow !== null && it.priceHigh !== null && it.priceLow !== undefined
-    ? `${num(usd(it.priceLow), 'Low current market estimate.')} – ${num(usd(it.priceHigh), 'High current market estimate.')}`
-    : 'Range unavailable';
-  const source = it.catalogMatchStatus === 'review' || it.catalogMatchStatus === 'ambiguous'
-    ? `Catalog check: ${it.matchNote}` : 'No verified catalog match';
-  return `<div class="tile"><span class="label">Decision price <span class="src">AI market range</span></span>
-    ${num(usd(it.decision.valuation), `Conservative reference used for decisions. It moves the AI typical price toward the low end of its range when identity or price evidence is weak.${it.priceBasis ? ` ${it.priceBasis}` : ''}`, 'tile-v')}
-    <span class="tile-sub">AI typical ${num(usd(it.estimatedOriginalPrice), 'AI typical market estimate before the conservative adjustment.')} · range ${range} · ${esc(source)}</span></div>`;
+  return `<div class="tile"><span class="label">Original price <span class="src">AI estimate</span></span>
+    ${num(usd(it.estimatedOriginalPrice), `What a US shopper pays for it at retail today (new, or certified renewed if no longer sold new), estimated by the AI from the photo.${it.priceBasis ? ` Based on: ${it.priceBasis}` : ''}`, 'tile-v')}
+    <span class="tile-sub">${esc(it.priceBasis || 'Not in your catalog')}</span></div>`;
 }
 
 function assessDetail(it) {
@@ -215,7 +203,6 @@ function assessDetail(it) {
   const decision = it.decision;
   const evidence = Math.min(it.identityConfidence, it.conditionConfidence, it.priceConfidence);
   const review = decision.reviewReasons || [];
-  const type = PRICE_TYPE_LABEL[it.priceType] || 'market estimate';
   return `
     <section class="card detail" aria-label="${esc(it.name)}">
       <div class="det-grid">
@@ -224,7 +211,7 @@ function assessDetail(it) {
           ${imgs.length > 1 ? `<div class="g-row">${imgs.slice(1).map((s) => `<img src="${s}" alt="">`).join('')}</div>` : ''}
         </div>
         <div class="det-body">
-          <div class="chips"><span class="chip">${CATEGORIES[it.category].label}</span><span class="chip">${packagingLabel(it)}</span><span class="chip ${it.priceSource === 'catalog' ? 'ok' : ''}">${it.priceSource === 'catalog' ? 'Catalog verified' : 'Market estimate'}</span>${decision.needsReview ? '<span class="chip warn">Review before routing</span>' : ''}</div>
+          <div class="chips"><span class="chip">${CATEGORIES[it.category].label}</span><span class="chip">${packagingLabel(it)}</span><span class="chip ${it.priceSource === 'catalog' ? 'ok' : ''}">${it.priceSource === 'catalog' ? 'Catalog price' : 'AI price estimate'}</span>${decision.needsReview ? '<span class="chip warn">Review before routing</span>' : ''}</div>
           <h2 class="det-title">${esc(it.name)}</h2>
           ${it.notes ? `<p class="det-note">${esc(it.notes)}</p>` : ''}
           ${it.observedText?.length ? `<div class="det-sec"><span class="label">Visible evidence</span><div class="chips">${it.observedText.map((text) => `<span class="chip">${esc(text)}</span>`).join('')}</div></div>` : ''}
@@ -243,11 +230,11 @@ function assessDetail(it) {
       <div class="tiles">
         ${priceTile(it)}
         <div class="tile"><span class="label">Value in current condition</span>
-          ${num(usd(decision.asIs), `${type === 'new street price' ? `New street reference ${usd(decision.valuation)} × ${pct(CATEGORIES[it.category].retention)} used-market retention` : `Current market reference ${usd(decision.valuation)}`} × ${CONDITIONS[it.condition].factor} condition factor${it.packagingStatus === 'missing' ? ` × ${NO_PACKAGING_FACTOR} for confirmed missing packaging` : ''}. Rates from ${RATES_SOURCE}.`, 'tile-v')}
-          <span class="tile-sub">Cautious value used for decisions</span></div>
+          ${num(usd(decision.asIs), `Original price ${usd(it.estimatedOriginalPrice)} × ${pct(CATEGORIES[it.category].retention)} used-market value for ${CATEGORIES[it.category].label.toLowerCase()} × ${CONDITIONS[it.condition].factor} for grade ${it.condition}${it.packagingStatus === 'missing' ? ` × ${NO_PACKAGING_FACTOR} for missing packaging` : ''}. Rates from ${RATES_SOURCE}.`, 'tile-v')}
+          <span class="tile-sub">What it sells for used, as-is</span></div>
         <div class="tile"><span class="label">Evidence confidence</span>
-          ${num(pct(evidence), 'Lowest of the AI confidence for identity, condition and price. Weak evidence is flagged for review and uses a cautious price.', 'tile-v')}
-          <span class="tile-sub">${num(pct(it.identityConfidence), 'Confidence in the exact item identity.')} identity · ${num(pct(it.conditionConfidence), 'Confidence in the visible condition grade.')} condition · ${num(pct(it.priceConfidence), 'Confidence in the market price range.')} price</span>
+          ${num(pct(evidence), 'Lowest of the AI confidence for identity, condition and price. Below 65% the item is flagged for a manual check.', 'tile-v')}
+          <span class="tile-sub">${num(pct(it.identityConfidence), 'Confidence in the exact item identity.')} identity · ${num(pct(it.conditionConfidence), 'Confidence in the visible condition grade.')} condition · ${num(pct(it.priceConfidence), 'Confidence in the original price estimate.')} price</span>
           <span class="meter ${decision.needsReview ? 'low' : ''}"><span style="width:${pct(evidence)}"></span></span></div>
       </div>
     </section>`;
@@ -324,7 +311,6 @@ function compareDetail(it) {
         </div>
         ${d.greener ? `<p class="greener"><span class="leaf" aria-hidden="true">♻</span>${OPTION_LABEL[d.greener.route]} is a greener option for ${num(usd(d.greener.gap), 'How much less it brings back than the recommended route.')} less.</p>` : ''}
         ${d.needsReview ? `<div class="review-note"><b>Review before routing</b><span>${esc(d.reviewReasons.join(' '))}</span></div>` : ''}
-        ${d.haircut > 0 ? `<p class="risk">Cautious price: ${num(usd(d.haircut), 'Difference between the AI typical price and the conservative price used in the decision.')} below the AI typical estimate because identity or price evidence is limited.</p>` : ''}
         <div class="rec-why">
           <span class="label">Why ${OPTION_LABEL[best].toLowerCase()}${it.reasonSource === 'bedrock' ? ' · written by Amazon Bedrock' : ''}</span>
           <p>${esc(it.reason)}</p>
@@ -347,7 +333,7 @@ function compareDetail(it) {
 function screenCompare() {
   const it = state.items[state.active];
   return `
-    ${title('Compare the routes', 'Every route uses the same cautious recovery estimate: chance of sale, costs and time loss. The highest result is recommended.')}
+    ${title('Compare the routes', 'Every route uses the same net recovery formula: chance of sale, costs and time loss. The highest result is recommended.')}
     <div class="ws-main">${itemList()}${compareDetail(it)}</div>
     ${actionBar(
       `<span>Item</span> ${num(`${state.active + 1}/${state.items.length}`, 'Position of this item in the list.')}`,

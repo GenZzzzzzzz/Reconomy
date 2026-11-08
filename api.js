@@ -54,9 +54,8 @@ async function localAnalyze(dataUrls) {
   if (!items.length) return { mode: 'local', id: null, items, catalog: catalogInfo };
   const facts = items.map((it, i) => ({
     index: i, name: it.name, category: it.category, condition: it.condition, defects: it.defects,
-    priceSource: it.priceSource === 'catalog' ? `verified store catalog (${it.sku})` : 'conservative AI market estimate',
-    referencePrice: it.estimatedOriginalPrice,
-    priceType: it.priceType,
+    priceSource: it.priceSource === 'catalog' ? `store catalog (${it.sku})` : 'AI estimate',
+    originalPrice: it.estimatedOriginalPrice,
     identityConfidence: it.identityConfidence,
     conditionConfidence: it.conditionConfidence,
     priceConfidence: it.priceConfidence,

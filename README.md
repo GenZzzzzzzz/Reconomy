@@ -66,9 +66,9 @@ different products. Note: Opus 4.8 rejects the `temperature` parameter, so the a
 Photos: JPG, PNG, WEBP and HEIC (iPhone). Chrome cannot decode HEIC, so the server converts it to JPEG
 (`/api/convert`, Pillow + pillow-heif). The server log prints how many images each analysis sent and what came back.
 
-Flow: Bedrock extracts visible evidence (product, labels, condition, defects and price range) → S3 catalog matching
-verifies high-confidence identities → `logic.js` calculates conservative recovery for every route → Bedrock writes
-the explanation using those exact results.
+Flow: Bedrock reads the visible evidence (product, labels, condition, defects) and estimates the original price →
+S3 catalog matching swaps in the catalog price for a verified match → `logic.js` calculates the net recovery value of
+every route → Bedrock writes the explanation using those exact results.
 
 Do not serve this folder with `python3 -m http.server`. It would expose `.env`.
 Without a reachable AI server the app shows **AI offline**, explains how to start it, and produces no results
@@ -78,7 +78,7 @@ Without a reachable AI server the app shows **AI offline**, explains how to star
 
 Needs the AWS CLI and AWS SAM CLI, plus Bedrock model access for the image model (default Claude Opus 4.8).
 Run `.venv/bin/python scripts/setup_aws.py` first so the `reconomy-catalog` Lambda exists. Without it the API still
-works, but uses conservative AI market estimates instead of catalog prices.
+works, but uses the AI's price estimates instead of catalog prices.
 
 ```
 ./scripts/sync-logic.sh
@@ -96,19 +96,29 @@ export const API_BASE = 'https://xxxx.execute-api.us-east-1.amazonaws.com';
 The badge in the header switches to "Live · AWS". To use a different model, pass
 `--parameter-overrides ModelId=<model or inference profile id>`. For production, set `AllowedOrigin` to your site's URL.
 
-## Evidence and reference price
+## Original price
 
-1. **Verified catalog reference:** AWS Lambda uses the name, visible brand/model text and identity confidence to
-   match `data/catalog.csv` in S3. A catalog reference replaces the AI range only for a high-confidence,
-   unambiguous match. Generic descriptions, wrong model generations and ambiguous items stay estimates.
-2. **Conservative AI market estimate:** Bedrock returns `priceLow`, `priceTypical`, `priceHigh`, `priceType`,
-   `priceBasis`, and separate identity / condition / price confidence. The decision blends the typical price toward
-   the low end using the weaker identity or price confidence. The UI shows the range, the cautious decision value,
-   visible evidence and any review flag.
-3. **Correct price basis:** `new_street` prices are converted to a used-market value. `current_market` and
-   `renewed_market` catalog references already represent the downstream market, so they are not discounted twice.
+Each item has one price, its **original price**: what a US shopper pays for it at retail today. That is the new
+price, or the certified-renewed price once the product is no longer sold new.
 
-Bedrock has no live web access. Catalog values are the source of truth for operational decisions. The included
+1. **Catalog price:** AWS Lambda matches the name, visible brand/model text and identity confidence against
+   `data/catalog.csv` in S3. For a high-confidence, unambiguous match, the catalog price is used. Generic
+   descriptions, wrong model generations and ambiguous matches keep the AI estimate.
+2. **AI estimate:** otherwise Bedrock returns `retailPriceToday`: the price at mainstream US retailers (Amazon,
+   Walmart, Target, Best Buy, the brand's own store), including everyday discounts. Never a launch MSRP, an old price
+   or a used price. Without visible model text, a distinctive design is priced as its closest visual match (the
+   older generation when several look alike); a generic design gets the most common mid-range product of its type.
+   `priceBasis` names the product priced and says new or renewed. The AI writes `priceBasis` before the number, so
+   the number follows from the named product.
+
+The price is used as-is. Identity, condition and price confidence never change it; a low confidence adds an amber
+review flag instead. Used value = original price × the category's used-market share × the condition-grade factor
+(× 0.92 when the original packaging is visibly missing).
+
+Condition grade: A = no visible wear, B = light wear, C = clear wear, marks or stains, D = heavy damage. Sides the
+photos do not show lower the condition confidence, not the grade.
+
+Bedrock has no live web access. Catalog prices are the source of truth for operational decisions. The included
 catalog is sample data, so replace it with your store's real price feed and update `price_checked_at`.
 
 ## Store data in Amazon S3 + AWS Lambda (real prices and rates)
@@ -116,8 +126,8 @@ catalog is sample data, so replace it with your store's real price feed and upda
 After Bedrock identifies the items, the server invokes **`reconomy-catalog`** (`lambda/catalog/handler.py`). It loads
 `data/catalog.csv` and `data/rates.json` from `reconomy-data-<account>`, and only returns a catalog reference for a
 high-confidence, unambiguous brand/model match supported by visible evidence. The response records a `verified`,
-`review`, `ambiguous` or `unmatched` status, score, price type and date. Weak matches intentionally keep the AI's
-conservative market range. Route rates come from `rates.json`.
+`review`, `ambiguous` or `unmatched` status, score and price date. Weak matches keep the AI's price estimate.
+Route rates come from `rates.json`.
 
 ```
 .venv/bin/python scripts/setup_aws.py              # create/update bucket, role, Lambda (idempotent)
@@ -133,14 +143,14 @@ If the Lambda is unavailable, the app keeps working with AI estimates and built-
 The algorithm has four simple stages:
 
 1. **Check the evidence.** The AI reports only evidence it can see: visible text, brand/model, condition and
-   defects. A weak identity, wide price range, unclear condition, ambiguous catalog match, risky repair or
-   near-tied result becomes an amber **review** flag rather than a hidden assumption.
-2. **Calculate conservative recovery for every route.** Every route uses the same formula:
+   defects. A weak identity or price estimate, unclear condition, ambiguous catalog match, risky repair
+   or near-tied result becomes an amber **review** flag rather than a hidden assumption.
+2. **Calculate the net recovery value of every route.** Every route uses the same formula:
 
    ```
-   conservative recovery = expected sale + unsold-item salvage
-                         - marketplace fees - handling - repair - disposal
-                         - market value lost while waiting
+   net recovery value = expected sale + unsold-item salvage
+                      - marketplace fees - handling - repair - disposal
+                      - market value lost while waiting
    ```
 
    Expected sale chance changes with the route, condition, visible defects and evidence confidence. Refurbishment
@@ -151,7 +161,7 @@ The algorithm has four simple stages:
    separately and accepts a bundle only when it clears a minimum $0.50 uplift. It never bundles an entire broad
    category such as apparel. Removing an item from a bundle re-prices the remaining members; a one-item bundle
    safely returns to that item's individual route.
-4. **Recommend and explain.** The highest conservative recovery wins. If a more circular route is within $0.50
+4. **Recommend and explain.** The highest net recovery value wins. If a more circular route is within $0.50
    or 3%, Reconomy shows it as a greener option without hiding the money difference. Savings are always compared
    to scrap, and the result counts items kept in use.
 

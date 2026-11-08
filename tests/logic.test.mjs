@@ -2,16 +2,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeItem, applyCatalogMatch, valuationPrice, decide, planDecisions, replan, summarize, applyRates, ROUTES, OPTIONS,
+  normalizeItem, applyCatalogMatch, decide, planDecisions, replan, summarize, applyRates, ROUTES, OPTIONS,
 } from '../logic.js';
 
 const item = (o) => applyCatalogMatch(normalizeItem({
-  name: 'Item', category: 'apparel', bundleKey: 'test-shirt', priceTypical: 20, priceLow: 15, priceHigh: 25,
+  name: 'Item', category: 'apparel', bundleKey: 'test-shirt', retailPriceToday: 20,
   condition: 'B', defects: [], hasPackaging: false, confidence: 0.9, ...o,
 }), null);
 
 test('every route has a result and the best is the highest viable net', () => {
-  const d = decide(item({ name: 'Phone', category: 'electronics', priceTypical: 300, priceLow: 250, priceHigh: 350, condition: 'A' }));
+  const d = decide(item({ name: 'Phone', category: 'electronics', retailPriceToday: 300, condition: 'A' }));
   for (const k of OPTIONS) assert.ok(d.results[k], k);
   const viable = OPTIONS.filter((k) => d.results[k].viable);
   assert.equal(d.best, viable.reduce((a, b) => (d.results[b].net > d.results[a].net ? b : a)));
@@ -20,19 +20,27 @@ test('every route has a result and the best is the highest viable net', () => {
 });
 
 test('a functional fault rules out resell and donate', () => {
-  const d = decide(item({ category: 'electronics', priceTypical: 200, defects: ['functional'] }));
+  const d = decide(item({ category: 'electronics', retailPriceToday: 200, defects: ['functional'] }));
   assert.equal(d.results.resell.viable, false);
   assert.equal(d.results.donate.viable, false);
   assert.ok(['refurbish', 'scrap'].includes(d.best));
 });
 
-test('uncertain AI prices are shaded toward the low end; catalog prices are trusted', () => {
-  const sure = valuationPrice(item({ priceTypical: 100, priceLow: 60, priceHigh: 120, confidence: 1 }));
-  const unsure = valuationPrice(item({ priceTypical: 100, priceLow: 60, priceHigh: 120, confidence: 0.5 }));
-  assert.equal(sure.price, 100);
-  assert.equal(unsure.price, 80);
-  const cat = applyCatalogMatch(normalizeItem({ priceTypical: 100, confidence: 0.2 }), { sku: 'X', retailPrice: 100 });
-  assert.equal(valuationPrice(cat).price, 100);
+test('the original price is used as-is: the AI estimate, or a verified catalog price instead', () => {
+  const unsure = decide(item({ retailPriceToday: 100, confidence: 0.2 }));
+  const sure = decide(item({ retailPriceToday: 100, confidence: 1 }));
+  assert.equal(unsure.market, sure.market, 'confidence never changes the price');
+  assert.equal(sure.market, 40, 'apparel used-market value is 40% of the original price');
+  assert.ok(unsure.needsReview, 'low confidence is flagged instead');
+  const cat = applyCatalogMatch(normalizeItem({ retailPriceToday: 120, confidence: 0.9 }), { sku: 'X', status: 'verified', referencePrice: 90 });
+  assert.equal(cat.estimatedOriginalPrice, 90);
+  assert.equal(cat.aiEstimatedPrice, 120);
+  const weak = applyCatalogMatch(normalizeItem({ retailPriceToday: 120 }), { sku: 'X', status: 'review', referencePrice: 90 });
+  assert.equal(weak.estimatedOriginalPrice, 120, 'an unverified catalog match keeps the AI estimate');
+  assert.equal(normalizeItem({ originalPrice: 75 }).estimatedOriginalPrice, 75, 'the older AI field name is still read');
+  const none = normalizeItem({ name: 'Mystery item' });
+  assert.equal(none.priceConfidence, 0);
+  assert.ok(decide(applyCatalogMatch(none, null)).reviewReasons.includes('Price estimate has limited evidence.'));
 });
 
 test('low-value items in the same category are bundled, and every member earns more than alone', () => {
@@ -50,8 +58,8 @@ test('low-value items in the same category are bundled, and every member earns m
 
 test('valuable items are not bundled, and categories are never mixed', () => {
   const plan = planDecisions([
-    item({ name: 'Phone', category: 'electronics', priceTypical: 400, priceLow: 350, priceHigh: 450, condition: 'A' }),
-    item({ name: 'Cable', category: 'electronics', priceTypical: 12 }),
+    item({ name: 'Phone', category: 'electronics', retailPriceToday: 400, condition: 'A' }),
+    item({ name: 'Cable', category: 'electronics', retailPriceToday: 12 }),
     item({ name: 'Shirt', category: 'apparel' }),
   ]);
   assert.equal(plan[0].decision.best, 'resell');
@@ -60,7 +68,7 @@ test('valuable items are not bundled, and categories are never mixed', () => {
 
 test('a mid-value item is not pulled into a lot of cheap items', () => {
   const plan = planDecisions([1, 2, 3, 4].map((n) => item({ name: `Shirt ${n}` }))
-    .concat([item({ name: 'Sneaker', priceTypical: 90, priceLow: 80, priceHigh: 100, condition: 'A' })]));
+    .concat([item({ name: 'Sneaker', retailPriceToday: 90, condition: 'A' })]));
   assert.equal(plan[4].decision.lotHome, null);
   assert.equal(plan[4].decision.best, 'resell');
   assert.equal(plan[0].decision.best, 'bundle');
@@ -93,7 +101,7 @@ test('replan: leaving a lot re-prices it and a one-item lot safely returns to it
 });
 
 test('a greener near-equal route is pointed out without changing the recommendation', () => {
-  const d = decide(item({ category: 'electronics', priceTypical: 120, priceLow: 110, condition: 'A', confidence: 1 }));
+  const d = decide(item({ category: 'electronics', retailPriceToday: 120, condition: 'A', confidence: 1 }));
   assert.equal(d.best, d.ranked[0]);
   if (d.greener) assert.ok(d.results[d.best].net - d.results[d.greener.route].net <= Math.max(0.5, Math.abs(d.results[d.best].net) * 0.03));
 });

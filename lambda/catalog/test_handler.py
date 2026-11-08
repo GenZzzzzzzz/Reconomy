@@ -36,7 +36,7 @@ class MatchTest(unittest.TestCase):
             self.assertEqual(got["sku"], expected, name)
             self.assertGreaterEqual(got["score"], H.MIN_VERIFIED_SCORE, name)
 
-    def test_weak_and_ambiguous_matches_keep_ai_range(self):
+    def test_weak_and_ambiguous_matches_keep_ai_estimate(self):
         self.assertEqual(match("Black over-ear wireless headphones", "electronics")["status"], "review")
         self.assertEqual(match("Apple iPhone (brown leather case)", "electronics")["status"], "ambiguous")
         self.assertEqual(match("Samsung Galaxy S23", "electronics")["status"], "review")

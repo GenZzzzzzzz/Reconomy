@@ -1,12 +1,10 @@
 // Reconomy decision engine.
 // One shared, explainable measure for every route:
-//   conservative recovery = expected money back - all route costs - wait-time value loss.
+//   net recovery value = expected money back - all route costs - value lost while waiting.
 //
-// The engine uses evidence before economics:
-//   1. Prefer a verified catalog price.
-//   2. Otherwise use the low side of the AI market-price range when evidence is weak.
-//   3. Only bundle compatible, low-value items when a shared lot beats selling them separately.
-//   4. Flag weak evidence and near-ties for a manager to check.
+// Original price (a verified catalog price, otherwise the AI's estimate) -> used-market value -> value as-is
+// -> every route. Only compatible, low-value items are bundled, and only when the lot beats selling them
+// separately. Weak evidence and near-ties are flagged for a manager to check.
 //
 // Source of truth is this file. scripts/sync-logic.sh copies it to backend/src/decision.mjs.
 
@@ -134,7 +132,6 @@ export function applyRates(raw, source = 'S3 rates.json') {
 // ---------- Evidence and price input ----------
 const clean = (v, max = 200) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const cleanKey = (v) => clean(v, 60).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-const PRICE_TYPES = new Set(['new_street', 'current_market', 'renewed_market', 'unknown']);
 const EVIDENCE_FILLER = new Set(['the', 'and', 'with', 'model', 'edition', 'version', 'generation']);
 
 function words(value) {
@@ -150,17 +147,11 @@ function supportedByEvidence(value, observedText, required = 1) {
   return terms.filter((word) => evidence.has(word)).length / terms.length >= required;
 }
 
-function normalizeStreetPrice(raw) {
-  let low = validNumber(raw.priceLow) ? clamp(Number(raw.priceLow), 1, 20000) : null;
-  let high = validNumber(raw.priceHigh) ? clamp(Number(raw.priceHigh), 1, 20000) : null;
-  if (low !== null && high !== null && low > high) [low, high] = [high, low];
-  let typical = validNumber(raw.priceTypical) ? Number(raw.priceTypical)
-    : low !== null && high !== null ? (low + high) / 2
-    : validNumber(raw.estimatedOriginalPrice) ? Number(raw.estimatedOriginalPrice) : 30;
-  typical = clamp(typical, 1, 20000);
-  if (low !== null) typical = Math.max(typical, low);
-  if (high !== null) typical = Math.min(typical, high);
-  return { typical: round2(typical), low, high };
+// Original price = what a shopper pays for the item at retail today (new, or certified renewed once it is no longer
+// sold new), as estimated by the AI. Older field names are still accepted. Returns null when the AI gave no usable price.
+function normalizePrice(raw) {
+  const value = [raw.retailPriceToday, raw.originalPrice, raw.priceTypical, raw.estimatedOriginalPrice].find(validNumber);
+  return value === undefined ? null : round2(clamp(Number(value), 1, 20000));
 }
 
 function normalizeRepairability(raw, hasFunctionalFault) {
@@ -172,11 +163,11 @@ function normalizeRepairability(raw, hasFunctionalFault) {
   return 0.6; // unknown fault: retain recovery potential, but price its risk in.
 }
 
-// Validate Bedrock output at the trust boundary. Identity, condition and price confidence are separate
-// because a clear photo may prove condition without proving the exact model or current market price.
+// Validate Bedrock output at the trust boundary. Identity, condition and price confidence are separate: a clear
+// photo can prove condition without proving the exact model or its price. Confidence only drives review flags.
 export function normalizeItem(raw, imageCount = 1) {
   const r = raw && typeof raw === 'object' ? raw : {};
-  const p = normalizeStreetPrice(r);
+  const price = normalizePrice(r);
   const observedText = Array.isArray(r.observedText)
     ? r.observedText.map((x) => clean(x, 80)).filter((text) => text && !/^(no visible|no apparent|no defects?)/i.test(text)).slice(0, 6)
     : [];
@@ -195,7 +186,8 @@ export function normalizeItem(raw, imageCount = 1) {
     ? clean(`${brand ? `${brand} ` : ''}${productType}`, 80)
     : clean(r.name || `${brand ? `${brand} ` : ''}${productType}`, 80);
   const conditionConfidence = confidence(r.conditionConfidence, identityConfidence);
-  const priceConfidence = Math.min(confidence(r.priceConfidence, identityConfidence), identityConfidence);
+  // Without a known identity the price cannot be known either. A missing price is always flagged.
+  const priceConfidence = price === null ? 0 : Math.min(confidence(r.priceConfidence, identityConfidence), identityConfidence);
   const condition = CONDITIONS[r.condition] ? r.condition : 'C';
   const defects = Array.isArray(r.defects) ? [...new Set(r.defects.filter((d) => DEFECTS[d]))] : [];
   const packagingStatus = ['included', 'missing', 'not_shown'].includes(r.packagingStatus)
@@ -211,10 +203,7 @@ export function normalizeItem(raw, imageCount = 1) {
     observedText,
     category: CATEGORIES[r.category] ? r.category : 'other',
     bundleKey: cleanKey(r.bundleKey ?? r.bundleGroup) || null,
-    estimatedOriginalPrice: p.typical, // kept for UI/backward compatibility; means reference price.
-    priceLow: p.low,
-    priceHigh: p.high,
-    priceType: PRICE_TYPES.has(r.priceType) ? r.priceType : 'new_street',
+    estimatedOriginalPrice: price ?? 30, // the original price; $30 placeholder only when the AI gave none (flagged)
     priceBasis: clean(r.priceBasis),
     identityConfidence,
     conditionConfidence,
@@ -251,7 +240,6 @@ export function applyCatalogMatch(item, match) {
     out.priceSource = 'catalog';
     out.sku = clean(match.sku, 40);
     out.catalogName = clean(match.name, 80);
-    out.priceType = PRICE_TYPES.has(match.priceType) ? match.priceType : 'current_market';
     out.priceBasis = clean(match.priceBasis || `Verified catalog match: ${out.catalogName}`);
     out.priceCheckedAt = clean(match.priceCheckedAt, 20) || null;
     out.catalogMatchStatus = 'verified';
@@ -261,18 +249,7 @@ export function applyCatalogMatch(item, match) {
   return out;
 }
 
-// Conservative reference price. The catalog is a verified business source. For AI values, blend
-// typical toward the low end using the weaker of identity and price confidence.
-export function valuationPrice(item) {
-  const typical = item.estimatedOriginalPrice;
-  if (item.priceSource === 'catalog') return { price: typical, haircut: 0, confidence: 1 };
-  const evidence = Math.min(item.identityConfidence, item.priceConfidence);
-  const low = Number.isFinite(item.priceLow) && item.priceLow < typical ? item.priceLow : typical * 0.85;
-  const price = round2(low + (typical - low) * evidence);
-  return { price, haircut: round2(typical - price), confidence: evidence };
-}
-
-// ---------- Conservative recovery calculation ----------
+// ---------- Net recovery calculation ----------
 const result = (viable, revenue, costs, note, revNote, costNote, extra = {}) => ({
   viable,
   revenue: round2(revenue),
@@ -285,8 +262,7 @@ const result = (viable, revenue, costs, note, revNote, costNote, extra = {}) => 
 });
 
 function evidencePenalty(f) {
-  // Price uncertainty is already handled in valuationPrice. This modest penalty reflects the fact that an
-  // uncertain identity/condition lowers our confidence that the chosen channel will clear at its forecast price.
+  // A modest penalty: an uncertain identity or condition makes it less likely the item sells at its forecast price.
   return 0.85 + 0.15 * Math.min(f.identityConfidence, f.conditionConfidence);
 }
 
@@ -296,24 +272,21 @@ function defectSellability(defects) {
 
 function itemFacts(item) {
   const category = CATEGORIES[item.category];
-  const valuation = valuationPrice(item);
+  const price = item.estimatedOriginalPrice; // original price, used as-is
   const packaging = item.packagingStatus === 'missing' ? NO_PACKAGING_FACTOR : 1;
-  // A current/renewed market price is already a market value. A new street price is converted to used market value.
-  const market = ['current_market', 'renewed_market'].includes(item.priceType)
-    ? valuation.price
-    : valuation.price * category.retention;
+  const market = price * category.retention; // what it sells for used in like-new condition
   const repairShare = item.defects.reduce((sum, d) => sum + DEFECTS[d].repair, 0);
   return {
     item,
     category,
-    valuation,
+    price,
     market,
     asIs: market * CONDITIONS[item.condition].factor * packaging,
     packaging,
-    repairCost: valuation.price * repairShare,
+    repairCost: price * repairShare,
     working: !item.defects.includes('functional'),
     repairability: item.repairability,
-    salvage: valuation.price * category.salvage,
+    salvage: price * category.salvage,
     identityConfidence: item.identityConfidence,
     conditionConfidence: item.conditionConfidence,
     priceConfidence: item.priceConfidence,
@@ -391,7 +364,7 @@ export function evaluate(item) {
         `Tax benefit: fair value ${usd(facts.asIs)} × ${pct(R.donate.taxRate)}.`, `Shipping ${usd(R.donate.fixed)}.`)
       : result(false, 0, 0, 'Charities need working items.', 'Not possible.', 'Not possible.'),
     scrap: result(true, facts.salvage, facts.category.disposal, 'Recycle for material value.',
-      `Recycler material value (${pct(facts.category.salvage)} of reference price).`, `Disposal ${usd(facts.category.disposal)}.`),
+      `Recycler material value (${pct(facts.category.salvage)} of original price).`, `Disposal ${usd(facts.category.disposal)}.`),
   };
   return rank({ results, facts });
 }
@@ -417,8 +390,6 @@ function rank(decision) {
     market: round2(decision.facts.market),
     asIs: round2(decision.facts.asIs),
     repairCost: round2(decision.facts.repairCost),
-    valuation: round2(decision.facts.valuation.price),
-    haircut: decision.facts.valuation.haircut,
   };
 }
 
@@ -554,7 +525,7 @@ export function buildReason(item, decision) {
   parts.push(`${item.name} is grade ${item.condition}${item.defects.length ? ` with ${item.defects.map((d) => DEFECTS[d].label.toLowerCase()).join(', ')}` : ''}.`);
   if (best === 'bundle') parts.push(`Bundle ${route.lot.id} shares one listing and shipment across ${route.lot.size} compatible items.`);
   if (!decision.results.resell.viable) parts.push('It cannot be sold or donated as-is because of its functional fault.');
-  parts.push(`${OPTION_LABEL[best]} has the highest conservative recovery at ${usd(route.net)}.`);
+  parts.push(`${OPTION_LABEL[best]} has the highest net recovery value at ${usd(route.net)}.`);
   if (best !== 'scrap') parts.push(`That is ${usd(decision.savings)} more than scrapping it.`);
   if (decision.needsReview) parts.push(`Check: ${decision.reviewReasons[0]}`);
   return parts.join(' ');

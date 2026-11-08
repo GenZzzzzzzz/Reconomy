@@ -1,8 +1,8 @@
 """reconomy-catalog Lambda.
 
 Matches Bedrock's evidence-supported product identity to a store catalog in S3. A catalog price is returned
-only for a high-confidence, unambiguous match. Weak matches deliberately keep the AI market-price range instead
-of replacing it with a possibly wrong catalog value.
+only for a high-confidence, unambiguous match. Weak matches keep the AI's price estimate instead of replacing it
+with a possibly wrong catalog value.
 
 Event:  {"items": [{"name", "brand", "model", "category", "identityConfidence", "observedText"}, ...]}
 Result: {"rates", "catalogVersion", "catalogSize", "matches"}
@@ -157,14 +157,14 @@ def match(item, catalog):
     if identity < MIN_IDENTITY_CONFIDENCE:
         return response("review", "Identity confidence is too low to trust a catalog match.", score=identity)
 
-    # A catalog match must have a visible brand. We intentionally do not replace a market estimate with
+    # A catalog match must have a visible brand. We intentionally do not replace the AI estimate with
     # a generic product row, even if the type looks similar.
     branded = [row for row in catalog if row["brandTokens"] and row["brandTokens"] <= words and row["category"] == category]
     if not branded:
         visible_brand_elsewhere = any(row["brandTokens"] and row["brandTokens"] <= words for row in catalog)
         if visible_brand_elsewhere:
             return response("unmatched", "Visible brand does not have a catalog product in this category.")
-        return response("review", "No visible catalog brand; kept the conservative market estimate.")
+        return response("review", "No visible catalog brand; kept the AI price estimate.")
 
     brand_words = set().union(*(row["brandTokens"] for row in branded))
     specific = {token for token in words - GENERIC - brand_words if not re.fullmatch(r"(19|20)\d\d", token)}
